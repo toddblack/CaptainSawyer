@@ -8,6 +8,7 @@
 [ext_resource type="Script" uid="uid://d27l1vuuk0msb" path="res://scripts/hud.gd" id="7_hud"]
 [ext_resource type="Script" uid="uid://4i7xcvsuh8en" path="res://scripts/fog_of_war.gd" id="8_fog"]
 [ext_resource type="Shader" path="res://assets/materials/wake_foam.gdshader" id="9_wake_foam"]
+[ext_resource type="Script" path="res://scripts/boat_visual.gd" id="10_boat_visual"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_ocean"]
 size = Vector2(200, 200)
@@ -27,15 +28,6 @@ shader_parameter/wave_speed = 1.0
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_boat"]
 size = Vector3(1.2, 1, 2.2)
-
-[sub_resource type="BoxMesh" id="BoxMesh_hull"]
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_boat"]
-albedo_color = Color(0.6, 0.4, 0.2, 1)
-
-[sub_resource type="CylinderMesh" id="CylinderMesh_mast"]
-
-[sub_resource type="BoxMesh" id="BoxMesh_sail"]
 
 [sub_resource type="Gradient" id="Gradient_wake"]
 colors = PackedColorArray(1, 1, 1, 0.9, 0.85, 0.92, 1, 0)
@@ -116,19 +108,8 @@ script = ExtResource("1_boat")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Boat" unique_id=200000002]
 shape = SubResource("BoxShape3D_boat")
 
-[node name="Hull" type="MeshInstance3D" parent="Boat" unique_id=1720557537]
-transform = Transform3D(1, 0, 0, 0, 0.75, 0, 0, 0, 2, 0, -0.3, 0)
-mesh = SubResource("BoxMesh_hull")
-surface_material_override/0 = SubResource("StandardMaterial3D_boat")
-
-[node name="Mast" type="MeshInstance3D" parent="Boat" unique_id=995056513]
-transform = Transform3D(0.2, 0, 0, 0, 2, 0, 0, 0, 0.2, 0, 1.5, 0)
-mesh = SubResource("CylinderMesh_mast")
-surface_material_override/0 = SubResource("StandardMaterial3D_boat")
-
-[node name="Sail" type="MeshInstance3D" parent="Boat/Mast" unique_id=1490408215]
-transform = Transform3D(2, 0, 0, 0, 0.8, 0, 0, 0, 0.1, 1.5, 0, 0)
-mesh = SubResource("BoxMesh_sail")
+[node name="BoatVisual" type="Node3D" parent="Boat"]
+script = ExtResource("10_boat_visual")
 
 [node name="WakeParticles" type="GPUParticles3D" parent="Boat" unique_id=838965754]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.38, 1.1)
