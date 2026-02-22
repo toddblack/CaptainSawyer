@@ -153,12 +153,18 @@ Logic must feel real. Invention is a consequence of encounter, not a menu choice
 
 ### 9. Ship Progression ✅
 
-| Tier | Name | Crew | Cargo | Unlocked by |
-|---|---|---|---|---|
-| 1 | Dinghy/Sloop | 1–3 | Tiny | Starting vessel (already built) |
-| 2 | Coastal Trader | 5–8 | Small | Dense hardwood + iron fittings |
-| 3 | Brigantine | 10–15 | Medium | More materials + knowledge |
-| 4 | Galleon | 30+ | Large | Late game, full community effort |
+| Tier | Name | Crew | Cargo | Max Speed | Turn Speed | Reverse | Unlocked by |
+|---|---|---|---|---|---|---|---|
+| 1 | Dinghy | 1–3 | Tiny | 7 | 2.5 | 2.0 | Starting vessel |
+| 2 | Sloop | 5–8 | Small | 10 | 2.0 | 3.0 | Hardwood + iron |
+| 3 | Brigantine | 10–15 | Medium | 13 | 1.5 | 3.5 | More materials + knowledge |
+| 4 | Galleon | 30+ | Large | 11 | 0.8 | 2.0 | Late game, community effort |
+
+Speed notes:
+- Brigantine is the fastest — two masts, built for ocean crossings
+- Galleon trades top speed for cargo and crew capacity; very slow to turn
+- Reverse always slower than forward — no ship reverses well under sail
+- When wind is added: all speeds become wind-modified (later feature)
 
 - Each tier visually distinct — wake, bow waves, silhouette all change
 - **Multiple ships** — as you establish settlements, run automated trade routes ✅
@@ -197,8 +203,38 @@ Current world: 200×200 units, 5–7 islands. Prototype scale only.
 
 ---
 
+## Platform ✅
+
+- **Primary:** Android mobile (Pixel device)
+- **Secondary:** Desktop (PC) — don't rule out
+- **Publishing:** Google Play Store (Android primary); itch.io likely for desktop (low barrier, indie-friendly); Steam possible later ($100 fee, more setup)
+- Godot 4 exports to both natively — mobile renderer already in use ✅ (great early call)
+
+**Implications for design & build:**
+
+| Area | Impact |
+|---|---|
+| Controls | Arrow keys won't work — needs touch input. Virtual joystick? Tap-to-move? Swipe-to-steer? ❓ |
+| UI | All touch targets need to be finger-sized (min ~48dp). HUD redesign must account for this. |
+| Screen ratio | Pixel phones are typically 20:9. Isometric layout needs to feel good on tall narrow screens. |
+| Performance | Mobile GPU budget is real. Keep draw calls low. Particle counts conservative. |
+| Camera zoom | Pinch-to-zoom likely replaces scroll wheel |
+| Saves | Mobile expects auto-save / background save — no "save before quit" |
+
+**Control scheme: Swipe-to-steer ✅** — press and drag, boat follows finger.
+
+Two implementation options (decide before coding):
+- **A — Floating joystick:** drag direction + distance from touch origin = heading + speed. No world-space projection needed.
+- **B — World follow:** touch projects onto world XZ plane; boat turns toward and sails to that world point, updates as finger moves. No UI overlay. Feels like guiding the boat through the water. ← *recommended*
+
+Both keep keyboard controls active for desktop testing.
+Pinch-to-zoom replaces scroll wheel. ✅
+
+---
+
 ## Open Questions ❓
 
+- ~~Touch control scheme~~ ✅ Option B (world-follow) implemented in boat.gd
 - **Captain Sawyer's personal progression?** Separate from crew?
 - **Fleet management depth** — how much control over automated trade ships?
 - **Can non-player ships be lost?**
