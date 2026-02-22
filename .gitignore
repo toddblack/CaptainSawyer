@@ -1,0 +1,15 @@
+# Godot cache — never commit
+.godot/
+
+# Import metadata is committed (contains import settings)
+# *.import  <- do NOT ignore these
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Export / build output
+export/
+*.exe
+*.apk
+*.aab
