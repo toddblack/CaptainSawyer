@@ -2,7 +2,7 @@ extends Camera3D
 
 # Zoom settings
 @export var min_zoom: float = 6.0
-@export var max_zoom: float = 25.0
+@export var max_zoom: float = 60.0
 @export var zoom_speed: float = 1.0
 @export var zoom_smoothing: float = 10.0
 

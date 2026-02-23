@@ -11,9 +11,9 @@
 [ext_resource type="Script" path="res://scripts/boat_visual.gd" id="10_boat_visual"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_ocean"]
-size = Vector2(200, 200)
-subdivide_width = 50
-subdivide_depth = 50
+size = Vector2(1000, 1000)
+subdivide_width = 100
+subdivide_depth = 100
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
 render_priority = 0

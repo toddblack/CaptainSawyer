@@ -6,8 +6,8 @@ extends Control
 
 const MAP_SIZE      := 160.0       # px
 const MAP_MARGIN    := 12.0        # px from screen edge
-const WORLD_HALF    := 100.0       # world coords run -100..100
-const CELL_SIZE     := 10.0        # world units per fog cell
+const WORLD_HALF    := 500.0       # world coords run -500..500
+const CELL_SIZE     := 50.0        # world units per fog cell
 const EXPLORE_RADIUS := 2          # cells cleared around the boat each frame
 
 # Fog cell grid: Vector2i -> true means explored

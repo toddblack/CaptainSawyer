@@ -11,14 +11,31 @@ const NAME_POOL: Array[String] = [
 	"The Emerald Bank",
 	"Storm's Rest",
 	"Amber Key",
+	"Whistler's Reef",
+	"Black Coral Cay",
+	"Devil's Anvil",
+	"Mariner's Folly",
+	"Cape Solitude",
+	"Ironwood Shoal",
+	"The Shattered Crown",
+	"Galleon's Grave",
+	"Saltmere Isle",
+	"Fog Witch Point",
+	"Starfall Atoll",
+	"Crimson Ledge",
+	"Old Bones Harbour",
+	"Windlass Cay",
+	"The Lonely Pinnacle",
+	"Driftwood Passage",
+	"Brine Witch Rock",
 ]
 
-const ISLAND_COUNT_MIN  := 5
-const ISLAND_COUNT_MAX  := 7
-const SPAWN_MIN         := -80.0
-const SPAWN_MAX         :=  80.0
-const MIN_SPACING       := 40.0
-const MIN_CENTER_DIST   := 20.0
+const ISLAND_COUNT_MIN  := 15
+const ISLAND_COUNT_MAX  := 25
+const SPAWN_MIN         := -475.0
+const SPAWN_MAX         :=  475.0
+const MIN_SPACING       := 80.0
+const MIN_CENTER_DIST   := 50.0
 
 
 func _ready() -> void:
@@ -32,7 +49,7 @@ func _ready() -> void:
 	names.shuffle()
 
 	var attempts := 0
-	while placed.size() < count and attempts < 200:
+	while placed.size() < count and attempts < 1000:
 		attempts += 1
 		var candidate := Vector2(
 			rng.randf_range(SPAWN_MIN, SPAWN_MAX),
@@ -62,7 +79,7 @@ func _spawn_island(pos2d: Vector2, island_name: String, rng: RandomNumberGenerat
 	island.island_name = island_name
 	island.base_radius = rng.randf_range(6.0, 15.0)
 	island.num_trees = rng.randi_range(4, 9)
-	island.discovery_radius = 22.0
+	island.discovery_radius = 60.0
 	island.position = Vector3(pos2d.x, 0.0, pos2d.y)
 	add_child(island)
 

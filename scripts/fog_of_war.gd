@@ -10,9 +10,9 @@ extends Node3D
 #  shader. This covers 100 % of the screen at any zoom level.         #
 # ------------------------------------------------------------------ #
 
-const FOG_TEX_SIZE   := 128
-const WORLD_HALF     := 100.0
-const REVEAL_RADIUS  := 22.0
+const FOG_TEX_SIZE   := 256
+const WORLD_HALF     := 500.0
+const REVEAL_RADIUS  := 55.0
 const MOVE_THRESHOLD := 0.5
 
 var _fog_image: Image

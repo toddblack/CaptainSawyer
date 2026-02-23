@@ -10,10 +10,9 @@ signal island_discovered(island_name: String, world_pos: Vector2)
 var discovered: bool = false
 var _boat: Node3D = null
 
-# Texture atlases and terrain shader
+# Terrain shader + single unified atlas
 const _TERRAIN_SHADER = preload("res://assets/materials/island_terrain.gdshader")
-const _TEX_BEACH      = preload("res://assets/textures/beach_watersEdge_rocks.png")
-const _TEX_GRASSES    = preload("res://assets/textures/grasses_dirt.png")
+const _TEX_ATLAS      = preload("res://assets/textures/dirt_sand_water_stone.png")
 
 # Materials
 var _terrain_mat: ShaderMaterial
@@ -82,19 +81,14 @@ func _height_at(x: float, z: float, r_norm: float) -> float:
 func _build_materials() -> void:
 	_terrain_mat = ShaderMaterial.new()
 	_terrain_mat.shader = _TERRAIN_SHADER
-	_terrain_mat.set_shader_parameter("beach_atlas", _TEX_BEACH)
-	_terrain_mat.set_shader_parameter("grass_atlas",  _TEX_GRASSES)
-	# Beach tile: col 1, row 3 in beach sheet (245 px tiles, 4 px margin, 10 px gutter)
-	var bs := 245 + 10
-	_terrain_mat.set_shader_parameter("beach_tile_offset",
-			Vector2((4 + 1 * bs) / 1024.0, (4 + 3 * bs) / 1024.0))
-	_terrain_mat.set_shader_parameter("beach_tile_scale",
-			Vector2(245.0 / 1024.0, 245.0 / 1024.0))
-	# Grass tile: col 0, row 0 in grasses sheet (215 px tiles, 34 px margin, 34 px gutter)
-	_terrain_mat.set_shader_parameter("grass_tile_offset",
-			Vector2(34.0 / 1024.0, 34.0 / 1024.0))
-	_terrain_mat.set_shader_parameter("grass_tile_scale",
-			Vector2(215.0 / 1024.0, 215.0 / 1024.0))
+	# Single 1024x1024 atlas — 4x4 grid of 256px tiles.
+	# Sand:  col 0, row 1 → UV base (0.00, 0.25)
+	# Grass: col 0, row 0 → UV base (0.00, 0.00)
+	_terrain_mat.set_shader_parameter("terrain_atlas",     _TEX_ATLAS)
+	_terrain_mat.set_shader_parameter("beach_tile_offset", Vector2(0.0,  0.25))
+	_terrain_mat.set_shader_parameter("beach_tile_scale",  Vector2(0.25, 0.25))
+	_terrain_mat.set_shader_parameter("grass_tile_offset", Vector2(0.0,  0.0))
+	_terrain_mat.set_shader_parameter("grass_tile_scale",  Vector2(0.25, 0.25))
 	_terrain_mat.set_shader_parameter("world_tile_size", 1.0)
 	# Blend heights: beach at low elevation, grass on the slopes and plateau
 	# max_h ≈ base_radius * 0.38, so these sit at ~20% and ~60% of peak

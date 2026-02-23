@@ -1,11 +1,14 @@
 extends CharacterBody3D
 
-# Movement settings
-@export var max_speed: float = 10.0
-@export var max_reverse_speed: float = 3.0
-@export var acceleration: float = 3.0
-@export var turn_speed: float = 2.0
-@export var drag: float = 0.95
+# Ship stats — assign a ShipData resource in the inspector to pick a tier.
+# Falls back to Dinghy defaults if nothing is assigned.
+@export var ship_data: ShipData
+
+var max_speed: float = 7.0
+var max_reverse_speed: float = 2.0
+var acceleration: float = 3.0
+var turn_speed: float = 2.5
+var drag: float = 0.95
 
 # Bobbing settings
 @export var bob_height: float = 0.15
@@ -13,8 +16,8 @@ extends CharacterBody3D
 @export var tilt_amount: float = 0.05
 
 # Boundary settings (ocean is 200x200, so keep within -95 to 95)
-@export var boundary_min: Vector2 = Vector2(-95, -95)
-@export var boundary_max: Vector2 = Vector2(95, 95)
+@export var boundary_min: Vector2 = Vector2(-495, -495)
+@export var boundary_max: Vector2 = Vector2(495, 495)
 
 var current_speed: float = 0.0
 var direction: Vector3 = Vector3.FORWARD
@@ -35,6 +38,12 @@ var _bow_right_mat: ParticleProcessMaterial = null
 
 
 func _ready() -> void:
+	if ship_data != null:
+		max_speed         = ship_data.max_speed
+		max_reverse_speed = ship_data.max_reverse_speed
+		acceleration      = ship_data.acceleration
+		turn_speed        = ship_data.turn_speed
+		drag              = ship_data.drag
 	_wake_mat = wake_particles.process_material as ParticleProcessMaterial
 	_bow_left_mat = _bow_left.process_material as ParticleProcessMaterial
 	_bow_right_mat = _bow_right.process_material as ParticleProcessMaterial

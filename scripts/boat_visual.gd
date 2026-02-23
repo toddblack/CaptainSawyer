@@ -43,8 +43,8 @@ func _add_mi(mesh: Mesh, mat: Material, pos: Vector3) -> void:
 
 func _hull() -> void:
 	var m: BoxMesh = BoxMesh.new()
-	m.size = Vector3(1.02, 0.46, 2.42)
-	_add_mi(m, _mat(_HULL_COLOR), Vector3(0.0, -0.20, 0.0))
+	m.size = Vector3(1.02, 0.75,  2.42)
+	_add_mi(m, _mat(_HULL_COLOR), Vector3(0.0, -0.34, 0.0))
 
 
 func _deck() -> void:
