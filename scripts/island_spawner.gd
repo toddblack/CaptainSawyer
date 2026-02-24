@@ -30,26 +30,29 @@ const NAME_POOL: Array[String] = [
 	"Brine Witch Rock",
 ]
 
-const ISLAND_COUNT_MIN  := 15
-const ISLAND_COUNT_MAX  := 25
-const SPAWN_MIN         := -475.0
-const SPAWN_MAX         :=  475.0
-const MIN_SPACING       := 80.0
-const MIN_CENTER_DIST   := 50.0
+const ISLAND_COUNT_MIN  := 10
+const ISLAND_COUNT_MAX  := 16
+const SPAWN_MIN         := -460.0
+const SPAWN_MAX         :=  460.0
+const MIN_SPACING       := 140.0
+const MIN_CENTER_DIST   := 80.0
 
 
 func _ready() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 
-	var count := rng.randi_range(ISLAND_COUNT_MIN, ISLAND_COUNT_MAX)
-	var placed: Array[Vector2] = []
+	# Home island — guaranteed near the boat's start position for quick testing
+	var home_pos := Vector2(0.0, 80.0)
+	_spawn_home_island(home_pos)
+	var placed: Array[Vector2] = [home_pos]
 
+	var count := rng.randi_range(ISLAND_COUNT_MIN, ISLAND_COUNT_MAX)
 	var names := NAME_POOL.duplicate()
 	names.shuffle()
 
 	var attempts := 0
-	while placed.size() < count and attempts < 1000:
+	while placed.size() <= count and attempts < 1000:
 		attempts += 1
 		var candidate := Vector2(
 			rng.randf_range(SPAWN_MIN, SPAWN_MAX),
@@ -68,19 +71,53 @@ func _ready() -> void:
 			continue
 
 		placed.append(candidate)
-		_spawn_island(candidate, names[placed.size() - 1], rng)
+		_spawn_island(candidate, names[(placed.size() - 2) % names.size()], rng)
 
-	if placed.size() < ISLAND_COUNT_MIN:
-		push_warning("IslandSpawner: only placed %d/%d islands" % [placed.size(), count])
+	if placed.size() - 1 < ISLAND_COUNT_MIN:
+		push_warning("IslandSpawner: only placed %d/%d islands" % [placed.size() - 1, count])
+
+
+func _spawn_home_island(pos2d: Vector2) -> void:
+	var island := IslandScript.new()
+	island.island_name      = "Sawyer's Rest"
+	island.discovery_radius = 80.0
+	island.position         = Vector3(pos2d.x, 0.0, pos2d.y)
+	island.island_type      = Island.IslandType.TROPICAL
+	island.base_radius      = 30.0
+	island.num_trees        = 45
+	add_child(island)
+	var hud: Node = get_tree().get_first_node_in_group("hud")
+	if hud:
+		island.island_discovered.connect(hud._on_island_discovered)
 
 
 func _spawn_island(pos2d: Vector2, island_name: String, rng: RandomNumberGenerator) -> void:
 	var island := IslandScript.new()
-	island.island_name = island_name
-	island.base_radius = rng.randf_range(6.0, 15.0)
-	island.num_trees = rng.randi_range(4, 9)
-	island.discovery_radius = 60.0
-	island.position = Vector3(pos2d.x, 0.0, pos2d.y)
+	island.island_name      = island_name
+	island.discovery_radius = 80.0
+	island.position         = Vector3(pos2d.x, 0.0, pos2d.y)
+
+	# Type first — radius and tree count vary by type
+	var itype: int = rng.randi_range(0, 3)
+	island.island_type = itype as Island.IslandType
+
+	var radius: float
+	match itype:
+		0: radius = rng.randf_range(18.0, 55.0)  # TROPICAL  — big lush islands
+		1: radius = rng.randf_range(12.0, 38.0)  # VOLCANIC  — compact but tall
+		2: radius = rng.randf_range(25.0, 65.0)  # ATOLL     — wide and flat
+		3: radius = rng.randf_range(22.0, 55.0)  # HIGHLAND  — medium to large
+		_: radius = rng.randf_range(15.0, 40.0)
+	island.base_radius = radius
+
+	# Tree count scales with island area; density_threshold handles clustering
+	match itype:
+		0: island.num_trees = int(radius * rng.randf_range(1.4, 2.2))   # TROPICAL
+		1: island.num_trees = int(radius * rng.randf_range(0.3, 0.6))   # VOLCANIC
+		2: island.num_trees = int(radius * rng.randf_range(0.5, 0.9))   # ATOLL
+		3: island.num_trees = int(radius * rng.randf_range(1.8, 3.0))   # HIGHLAND
+		_: island.num_trees = int(radius * rng.randf_range(1.0, 1.5))
+
 	add_child(island)
 
 	# Connect discovery signal to HUD after the island is in the tree
