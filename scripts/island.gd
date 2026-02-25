@@ -128,9 +128,9 @@ func _height_at_xy(x: float, z: float) -> float:
 
 	# All other types: larger flat plateau + steeper coastal slope so the
 	# low-height sandy zone stays narrow close to the waterline.
-	var profile: float = 1.0 - smoothstep(0.55, 0.88, r_norm)
-	profile = clamp(profile + hn * 0.15, 0.0, 1.0)
-	var result: float  = profile * max_h
+	var land_profile: float = 1.0 - smoothstep(0.55, 0.88, r_norm)
+	land_profile = clamp(land_profile + hn * 0.15, 0.0, 1.0)
+	var result: float  = land_profile * max_h
 	# Beach floor — narrow ring at coast, height 0.55 = blend_low
 	result = max(result, (1.0 - smoothstep(0.88, 1.0, r_norm)) * 0.55)
 	return result

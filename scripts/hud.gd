@@ -4,11 +4,10 @@ extends Control
 #  Minimap constants                                                   #
 # ------------------------------------------------------------------ #
 
-const MAP_SIZE      := 160.0       # px
-const MAP_MARGIN    := 12.0        # px from screen edge
-const WORLD_HALF    := 500.0       # world coords run -500..500
-const CELL_SIZE     := 50.0        # world units per fog cell
-const EXPLORE_RADIUS := 2          # cells cleared around the boat each frame
+const MAP_SIZE:       float = 160.0
+const WORLD_HALF:     float = 500.0
+const CELL_SIZE:      float = 50.0
+const EXPLORE_RADIUS: int   = 2
 
 # Fog cell grid: Vector2i -> true means explored
 var _explored: Dictionary = {}
@@ -19,45 +18,104 @@ var _islands: Array[Vector2] = []
 # Live boat reference
 var _boat: Node3D = null
 
-# Cached minimap rect (top-right corner)
+# Minimap rect — set each frame inside _draw_bottom_panel()
 var _map_rect: Rect2
 
 # Discovery toast
 var _toast_label: Label
 var _toast_tween: Tween
 
+# Arc panel clipping — bodies live in a child Control so clip_children masks them
+var _arc_clip:   Control = null
+var _arc_bodies: Control = null
+
+# ------------------------------------------------------------------ #
+#  Day/night arc constants                                             #
+# ------------------------------------------------------------------ #
+
+const ARC_RADIUS:  float = 52.0
+const ARC_PANEL_W: float = 148.0
+const ARC_PANEL_H: float = 72.0
+
+var _star_offsets: Array[Vector2] = [
+	Vector2(-38.0, -20.0), Vector2( 28.0, -32.0), Vector2(-18.0, -40.0),
+	Vector2( 45.0, -12.0), Vector2(-50.0,  -8.0), Vector2( 10.0, -44.0),
+	Vector2( 38.0, -38.0),
+]
+
+# ------------------------------------------------------------------ #
+#  Bottom panel constants                                              #
+# ------------------------------------------------------------------ #
+
+const BOTTOM_PANEL_H:  float = 200.0
+const CENTER_PANEL_H:  float = 100.0  # half-height centre console, bottom-locked
+const PANEL_PAD:       float = 10.0
+
+# Seamless wood texture (1024×1024). Tiling is done manually in _draw_wood_panel()
+# so we control the display size precisely.
+# Each displayed tile samples the full texture; adjust WOOD_TILE_DISPLAY to taste.
+const WOOD_TILE_ORIGIN:    Vector2 = Vector2(256.0, 256.0)  # col 1, row 0 of the 4×4 atlas
+const WOOD_TILE_SRC:       float   = 256.0  # one tile in the atlas (px)
+const WOOD_TILE_DISPLAY_W: float   = 256.0  # display width per tile  (px)
+const WOOD_TILE_DISPLAY_H: float   = 72.0   # display height per tile (px)
+
+# Rope border — horizontal rope tile from rope_segments.png (1024×1024).
+# ROPE_SRC samples the centre band of cell (0,0) — 128px wide, rope body only.
+# Adjust ROPE_SRC.position.y / size.y if the rope body sits at a different offset.
+const ROPE_BORDER_H:  float = 8.0
+const ROPE_TILE_W:    float = 104                              # width of the horizontal rope tile
+const ROPE_SRC:       Rect2 = Rect2(5, 130, 363, 45)          # horizontal rope band
+const ROPE_CORNER_SRC: Rect2 = Rect2(255.0, 807.0, 66.0, 68.0) # └ corner (left-side-turn-up)
+
+var _wood_tex: Texture2D = null
+var _rope_tex: Texture2D = null
+
 
 func _ready() -> void:
 	_boat = get_tree().get_first_node_in_group("boat")
 
-	# Build the minimap rect (top-right corner)
-	var vp := get_viewport_rect()
-	_map_rect = Rect2(
-		MAP_MARGIN,
-		vp.size.y - MAP_SIZE - MAP_MARGIN,
-		MAP_SIZE,
-		MAP_SIZE
-	)
+	_wood_tex = load("res://assets/textures/wood_nautical.png") as Texture2D
+	_rope_tex = load("res://assets/textures/rope_segments.png") as Texture2D
 
-	# Toast label — starts invisible, centered near top
+	# Toast label — sits below the arc panel
 	_toast_label = Label.new()
 	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_toast_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_toast_label.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	_toast_label.add_theme_font_size_override("font_size", 20)
-	_toast_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.7))
-	_toast_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	_toast_label.add_theme_color_override("font_color",        Color(1.0, 0.95, 0.7))
+	_toast_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.8))
 	_toast_label.add_theme_constant_override("shadow_offset_x", 1)
 	_toast_label.add_theme_constant_override("shadow_offset_y", 1)
 	_toast_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_toast_label.position.y = 60
+	_toast_label.position.y = ARC_PANEL_H + 8.0
 	_toast_label.modulate.a = 0.0
 	add_child(_toast_label)
+
+	# Initialise _map_rect to a sane default before first _draw()
+	var vp: Rect2 = get_viewport_rect()
+	_map_rect = Rect2(PANEL_PAD, vp.size.y - BOTTOM_PANEL_H + PANEL_PAD, MAP_SIZE, MAP_SIZE)
+
+	# Arc panel clip node — clip_children masks any child rendering to this rect,
+	# giving the sun/moon a hard horizon clip without overdraw hacks.
+	_arc_clip = Control.new()
+	_arc_clip.position    = Vector2(vp.size.x * 0.5 - ARC_PANEL_W * 0.5, 0.0)
+	_arc_clip.size        = Vector2(ARC_PANEL_W, ARC_PANEL_H)
+	_arc_clip.clip_contents = true
+	_arc_clip.mouse_filter  = Control.MOUSE_FILTER_IGNORE
+	add_child(_arc_clip)
+
+	_arc_bodies = Control.new()
+	_arc_bodies.size         = Vector2(ARC_PANEL_W, ARC_PANEL_H)
+	_arc_bodies.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_arc_clip.add_child(_arc_bodies)
+	_arc_bodies.draw.connect(_on_arc_bodies_draw)
 
 
 func _process(_delta: float) -> void:
 	if _boat:
 		_mark_explored(_boat.global_position)
 	queue_redraw()
+	_arc_bodies.queue_redraw()
 
 
 # ------------------------------------------------------------------ #
@@ -65,67 +123,419 @@ func _process(_delta: float) -> void:
 # ------------------------------------------------------------------ #
 
 func _mark_explored(world_pos: Vector3) -> void:
-	var cx := int(floor((world_pos.x + WORLD_HALF) / CELL_SIZE))
-	var cz := int(floor((world_pos.z + WORLD_HALF) / CELL_SIZE))
-	for dx in range(-EXPLORE_RADIUS, EXPLORE_RADIUS + 1):
-		for dz in range(-EXPLORE_RADIUS, EXPLORE_RADIUS + 1):
+	var cx: int = int(floor((world_pos.x + WORLD_HALF) / CELL_SIZE))
+	var cz: int = int(floor((world_pos.z + WORLD_HALF) / CELL_SIZE))
+	for dx: int in range(-EXPLORE_RADIUS, EXPLORE_RADIUS + 1):
+		for dz: int in range(-EXPLORE_RADIUS, EXPLORE_RADIUS + 1):
 			_explored[Vector2i(cx + dx, cz + dz)] = true
 
 
 # ------------------------------------------------------------------ #
-#  Drawing                                                             #
+#  Drawing — entry point                                               #
 # ------------------------------------------------------------------ #
 
 func _draw() -> void:
-	# Update map rect each draw in case viewport resized
-	var vp := get_viewport_rect()
-	_map_rect = Rect2(
-		MAP_MARGIN,
-		vp.size.y - MAP_SIZE - MAP_MARGIN,
-		MAP_SIZE,
-		MAP_SIZE
+	var vp: Rect2 = get_viewport_rect()
+	_draw_day_night_arc(vp)
+	_draw_bottom_panel(vp)
+
+
+# ------------------------------------------------------------------ #
+#  Day / night arc (top-centre)                                        #
+# ------------------------------------------------------------------ #
+
+func _draw_day_night_arc(vp: Rect2) -> void:
+	var cx: float = vp.size.x / 2.0
+	var cy: float = ARC_RADIUS + 18.0
+
+	var t:          float = WorldClock.time_of_day
+	var body_angle: float = PI * 0.5 - t * TAU
+
+	# Sky colour and star alpha driven continuously by sun elevation
+	var sun_elev: float = clampf(-sin(body_angle), 0.0, 1.0)
+	var sky_col:  Color = Color(0.04, 0.06, 0.18, 0.92).lerp(
+		Color(0.22, 0.52, 0.82, 0.90), sun_elev)
+
+	var panel_rect: Rect2 = Rect2(cx - ARC_PANEL_W / 2.0, 0.0, ARC_PANEL_W, ARC_PANEL_H)
+	draw_rect(panel_rect, sky_col)
+
+	# Stars fade out as the sun rises, in as it sets
+	var star_a: float = clampf(1.0 - sun_elev * 3.0, 0.0, 1.0)
+	if star_a > 0.0:
+		for star: Vector2 in _star_offsets:
+			draw_circle(Vector2(cx + star.x, cy + star.y), 1.2, Color(0.85, 0.88, 1.0, 0.7 * star_a))
+
+	var arc_col: Color = Color(0.25, 0.30, 0.55, 0.50).lerp(Color(0.55, 0.65, 0.78, 0.50), sun_elev)
+	draw_arc(Vector2(cx, cy), ARC_RADIUS, PI, TAU, 48, arc_col, 1.5)
+	draw_line(
+		Vector2(cx - ARC_RADIUS - 2.0, cy),
+		Vector2(cx + ARC_RADIUS + 2.0, cy),
+		Color(0.45, 0.55, 0.65, 0.45), 1.0
 	)
 
-	# Background
+	# Bodies are drawn by _arc_bodies child (clipped by _arc_clip.clip_children)
+	draw_rect(panel_rect, Color(0.30, 0.40, 0.55, 0.55), false, 1.0)
+
+
+# Draws sun and moon on _arc_bodies — called via its draw signal.
+# _arc_clip.clip_children = CLIP_CHILDREN_ONLY ensures these are masked to the panel rect.
+func _on_arc_bodies_draw() -> void:
+	var cx: float = ARC_PANEL_W * 0.5
+	var cy: float = ARC_RADIUS + 18.0
+
+	var t:          float = WorldClock.time_of_day
+	var body_angle: float = PI * 0.5 - t * TAU
+	var moon_angle: float = body_angle + PI
+
+	var sun_pos:  Vector2 = Vector2(cx + cos(body_angle) * ARC_RADIUS, cy + sin(body_angle) * ARC_RADIUS)
+	_arc_bodies.draw_circle(sun_pos, 11.0, Color(1.0, 0.85, 0.30, 0.25))
+	_arc_bodies.draw_circle(sun_pos,  7.0, Color(1.0, 0.88, 0.20))
+
+	var moon_pos: Vector2 = Vector2(cx + cos(moon_angle) * ARC_RADIUS, cy + sin(moon_angle) * ARC_RADIUS)
+	_arc_bodies.draw_circle(moon_pos, 9.0, Color(0.70, 0.78, 1.0, 0.20))
+	_arc_bodies.draw_circle(moon_pos, 6.0, Color(0.86, 0.90, 1.0))
+
+
+# ------------------------------------------------------------------ #
+#  Bottom panel — wood console spanning full screen width              #
+# ------------------------------------------------------------------ #
+
+func _draw_bottom_panel(vp: Rect2) -> void:
+	var full_y:   float = vp.size.y - BOTTOM_PANEL_H
+	# side_w uses 3× PANEL_PAD so both minimap and resource bars have
+	# generous right/left inner margins in addition to the outer edge pad.
+	var side_w:   float = MAP_SIZE + PANEL_PAD * 3.0  # 190 px
+
+	# Shared tile grid origin — all three sections align to this
+	var tile_org: Vector2 = Vector2(0.0, full_y)
+
+	# ── Left station (minimap) — full height ──────────────────────────
+	var left_rect: Rect2 = Rect2(0.0, full_y, side_w, BOTTOM_PANEL_H)
+	_draw_wood_panel(left_rect, tile_org)
+	_draw_rope_border(0.0, full_y, side_w)
+
+	# ── Right station (resources) — full height ───────────────────────
+	var right_x:    float = vp.size.x - side_w
+	var right_rect: Rect2 = Rect2(right_x, full_y, side_w, BOTTOM_PANEL_H)
+	_draw_wood_panel(right_rect, tile_org)
+	_draw_rope_border(right_x, full_y, side_w)
+
+	# ── Centre console (cargo) — half height, locked to bottom ───────
+	var ctr_x:    float = side_w
+	var ctr_w:    float = vp.size.x - side_w * 2.0
+	var ctr_y:    float = vp.size.y - CENTER_PANEL_H
+	var ctr_rect: Rect2 = Rect2(ctr_x, ctr_y, ctr_w, CENTER_PANEL_H)
+	_draw_wood_panel(ctr_rect, tile_org)
+	_draw_rope_border(ctr_x, ctr_y, ctr_w)
+
+	# Vertical rope borders at the inner edges of the side stations
+	var gap_h: float = ctr_y - full_y
+	_draw_rope_border_vert(side_w - ROPE_BORDER_H, full_y, gap_h)
+	_draw_rope_border_vert(right_x,               full_y, gap_h)
+
+	# Corner pieces — atlas piece is └; flip flags derive the other three orientations.
+	# Bottom corners (vertical rope meets cargo horizontal rope)
+	_draw_rope_corner(side_w - ROPE_BORDER_H, ctr_y,  false, false)  # └  bottom-left
+	_draw_rope_corner(right_x,               ctr_y,  true,  false)  # ┘  bottom-right
+	# Top corners (vertical rope meets side-station horizontal rope)
+	_draw_rope_corner(side_w - ROPE_BORDER_H, full_y, true,  true)   # ┐  top-left
+	_draw_rope_corner(right_x,               full_y, false, true)    # ┌  top-right
+
+	# ── Station contents ──────────────────────────────────────────────
+	# Content starts below the rope border with extra top breathing room.
+	var content_top: float = full_y + ROPE_BORDER_H + PANEL_PAD + 4.0
+
+	_map_rect = Rect2(PANEL_PAD, content_top, MAP_SIZE, MAP_SIZE)
+	_draw_minimap()
+
+	# Resources: PANEL_PAD * 2 from panel left edge for extra left margin
+	_draw_resource_bars(right_x + PANEL_PAD * 2.0, content_top, MAP_SIZE, MAP_SIZE)
+
+	_draw_cargo(ctr_rect)
+
+
+# ------------------------------------------------------------------ #
+#  Wood panel tiling                                                   #
+# ------------------------------------------------------------------ #
+
+# Tiles the chosen atlas tile across panel_rect in a staggered (brick) pattern.
+# tile_origin anchors the shared grid so multiple adjacent panels stay aligned.
+# Odd rows are offset by half a tile so vertical seams never line up.
+func _draw_wood_panel(panel_rect: Rect2, tile_origin: Vector2 = Vector2.ZERO) -> void:
+	if _wood_tex == null:
+		draw_rect(panel_rect, Color(0.22, 0.15, 0.08, 0.92))
+		return
+
+	# Which rows of the shared grid are visible inside this panel?
+	var first_row: int = int(floor((panel_rect.position.y - tile_origin.y) / WOOD_TILE_DISPLAY_H))
+	var last_row:  int = int(ceil( (panel_rect.end.y      - tile_origin.y) / WOOD_TILE_DISPLAY_H))
+
+	for row: int in range(first_row, last_row):
+		var stagger: float   = (WOOD_TILE_DISPLAY_W * 0.5) if (row % 2 == 1) else 0.0
+		var first_col: int   = int(floor((panel_rect.position.x - tile_origin.x + stagger) / WOOD_TILE_DISPLAY_W)) - 1
+		var last_col:  int   = int(ceil( (panel_rect.end.x      - tile_origin.x + stagger) / WOOD_TILE_DISPLAY_W)) + 1
+
+		for col: int in range(first_col, last_col):
+			var dx: float = tile_origin.x + float(col) * WOOD_TILE_DISPLAY_W - stagger
+			var dy: float = tile_origin.y + float(row) * WOOD_TILE_DISPLAY_H
+
+			# Clamp both edges to stay inside the panel
+			var dest_x1: float = maxf(dx,                       panel_rect.position.x)
+			var dest_x2: float = minf(dx + WOOD_TILE_DISPLAY_W, panel_rect.end.x)
+			var dest_y1: float = maxf(dy,                       panel_rect.position.y)
+			var dest_y2: float = minf(dy + WOOD_TILE_DISPLAY_H, panel_rect.end.y)
+
+			if dest_x2 <= dest_x1 or dest_y2 <= dest_y1:
+				continue
+
+			var dw: float = dest_x2 - dest_x1
+			var dh: float = dest_y2 - dest_y1
+
+			var src_ox: float = (dest_x1 - dx) * WOOD_TILE_SRC / WOOD_TILE_DISPLAY_W
+			var src_oy: float = (dest_y1 - dy) * WOOD_TILE_SRC / WOOD_TILE_DISPLAY_H
+			var sw: float     = dw * WOOD_TILE_SRC / WOOD_TILE_DISPLAY_W
+			var sh: float     = dh * WOOD_TILE_SRC / WOOD_TILE_DISPLAY_H
+
+			draw_texture_rect_region(
+				_wood_tex,
+				Rect2(dest_x1, dest_y1, dw, dh),
+				Rect2(WOOD_TILE_ORIGIN.x + src_ox, WOOD_TILE_ORIGIN.y + src_oy, sw, sh)
+			)
+
+	# Uniform darkening so text stays readable
+	draw_rect(panel_rect, Color(0.0, 0.0, 0.0, 0.40))
+
+
+# ------------------------------------------------------------------ #
+#  Minimap (drawn inside bottom panel)                                 #
+# ------------------------------------------------------------------ #
+
+func _draw_minimap() -> void:
 	draw_rect(_map_rect, Color(0.05, 0.10, 0.18, 0.92))
+	draw_rect(_map_rect.grow(-2), Color(0.08, 0.20, 0.40, 0.60))
 
-	# Ocean tint (slightly lighter than background)
-	draw_rect(_map_rect.grow(-2), Color(0.08, 0.20, 0.40, 0.6))
-
-	# Fog of war — draw dark cells over unexplored areas
-	var total_cells := int(WORLD_HALF * 2.0 / CELL_SIZE)
-	for cx in range(total_cells):
-		for cz in range(total_cells):
+	var total_cells: int = int(WORLD_HALF * 2.0 / CELL_SIZE)
+	for cx: int in range(total_cells):
+		for cz: int in range(total_cells):
 			if not _explored.has(Vector2i(cx, cz)):
-				var cell_world := Vector2(
+				var cell_world: Vector2 = Vector2(
 					cx * CELL_SIZE - WORLD_HALF,
 					cz * CELL_SIZE - WORLD_HALF
 				)
-				var cell_px := _world_to_map(cell_world)
-				var cell_size_px := MAP_SIZE / total_cells
+				var cell_px:      Vector2 = _world_to_map(cell_world)
+				var cell_size_px: float   = MAP_SIZE / total_cells
 				draw_rect(
 					Rect2(cell_px, Vector2(cell_size_px, cell_size_px)),
 					Color(0.02, 0.04, 0.08, 0.88)
 				)
 
-	# Discovered islands — green dots
-	for island_pos in _islands:
-		var px := _world_to_map(island_pos)
-		draw_circle(px, 4.0, Color(0.25, 0.75, 0.30))
-		draw_arc(px, 4.0, 0, TAU, 12, Color(0.5, 1.0, 0.5), 1.0)
+	for island_pos: Vector2 in _islands:
+		var mp: Vector2 = _world_to_map(island_pos)
+		draw_circle(mp, 4.0, Color(0.25, 0.75, 0.30))
+		draw_arc(mp, 4.0, 0.0, TAU, 12, Color(0.5, 1.0, 0.5), 1.0)
 
-	# Boat — small yellow dot with direction indicator
 	if _boat:
-		var bpx := _world_to_map(Vector2(_boat.global_position.x, _boat.global_position.z))
+		var bpx: Vector2 = _world_to_map(Vector2(_boat.global_position.x, _boat.global_position.z))
 		draw_circle(bpx, 4.0, Color(1.0, 0.9, 0.2))
 
-	# Border
-	draw_rect(_map_rect, Color(0.6, 0.7, 0.8, 0.8), false, 1.5)
+	_draw_inset_bevel(_map_rect)
 
 
 func _world_to_map(world_xz: Vector2) -> Vector2:
-	var t := (world_xz + Vector2(WORLD_HALF, WORLD_HALF)) / (WORLD_HALF * 2.0)
+	var t: Vector2 = (world_xz + Vector2(WORLD_HALF, WORLD_HALF)) / (WORLD_HALF * 2.0)
 	return _map_rect.position + t * _map_rect.size
+
+
+# ------------------------------------------------------------------ #
+#  Resource bars (drawn inside bottom panel)                           #
+# ------------------------------------------------------------------ #
+
+func _draw_resource_bars(x: float, y: float, w: float, h: float) -> void:
+	var gap:   float = 8.0
+	var bar_h: float = (h - gap) / 2.0
+
+	_draw_resource_bar(Rect2(x, y,              w, bar_h),
+		"FOOD",  VoyageResources.food_pct(),  Color(0.82, 0.38, 0.08))
+	_draw_resource_bar(Rect2(x, y + bar_h + gap, w, bar_h),
+		"WATER", VoyageResources.water_pct(), Color(0.18, 0.52, 0.88))
+
+
+func _draw_resource_bar(inset: Rect2, res_label: String, pct: float, fill_color: Color) -> void:
+	var font:    Font = ThemeDB.fallback_font
+	var font_sz: int  = 11
+
+	# Carved inset
+	draw_rect(inset, Color(0.06, 0.04, 0.03, 0.90))
+	_draw_inset_bevel(inset)
+
+	# Label
+	draw_string(font,
+		Vector2(inset.position.x + 6.0, inset.position.y + font_sz + 3.0),
+		res_label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz,
+		Color(0.78, 0.68, 0.48))
+
+	# Bar track
+	var bm:       float = 5.0
+	var bar_rect: Rect2 = Rect2(
+		inset.position.x + bm,
+		inset.position.y + font_sz + 9.0,
+		inset.size.x - bm * 2.0,
+		inset.size.y - font_sz - 15.0
+	)
+	draw_rect(bar_rect, Color(0.04, 0.03, 0.02, 0.90))
+
+	# Fill — bleeds to red below 30 %
+	if pct > 0.0:
+		var col: Color = fill_color
+		if pct < 0.30:
+			col = fill_color.lerp(Color(0.90, 0.10, 0.05), (0.30 - pct) / 0.30)
+		draw_rect(Rect2(bar_rect.position, Vector2(bar_rect.size.x * pct, bar_rect.size.y)), col)
+
+	draw_rect(bar_rect, Color(0.30, 0.25, 0.15, 0.60), false, 1.0)
+
+
+# ------------------------------------------------------------------ #
+#  Rope border — horizontal rope tile along the top of a panel        #
+# ------------------------------------------------------------------ #
+
+func _draw_rope_border(x: float, y: float, w: float) -> void:
+	if _rope_tex == null:
+		# Fallback: warm line
+		draw_line(Vector2(x, y + ROPE_BORDER_H * 0.5),
+			Vector2(x + w, y + ROPE_BORDER_H * 0.5),
+			Color(0.65, 0.50, 0.28, 0.80), ROPE_BORDER_H)
+		return
+
+	# Drop shadow — drawn behind the rope
+	draw_rect(Rect2(x + 1.0, y + 2.0, w, ROPE_BORDER_H), Color(0.0, 0.0, 0.0, 0.35))
+
+	var cols: int = int(ceil(w / ROPE_TILE_W)) + 1
+	for col: int in range(cols):
+		var dx: float     = x + float(col) * ROPE_TILE_W
+		var dest_x1: float = maxf(dx, x)
+		var dest_x2: float = minf(dx + ROPE_TILE_W, x + w)
+		if dest_x2 <= dest_x1:
+			continue
+		var dw:    float = dest_x2 - dest_x1
+		var src_ox: float = (dest_x1 - dx) / ROPE_TILE_W * ROPE_SRC.size.x
+		var src_w:  float = dw / ROPE_TILE_W * ROPE_SRC.size.x
+		draw_texture_rect_region(
+			_rope_tex,
+			Rect2(dest_x1, y, dw, ROPE_BORDER_H),
+			Rect2(ROPE_SRC.position.x + src_ox, ROPE_SRC.position.y, src_w, ROPE_SRC.size.y)
+		)
+
+
+# Vertical variant — rotates the drawing context 90° so the same horizontal
+# rope tile runs downward.  Math: with pivot (x, y_top) and rotation PI/2,
+#   screen = (x - local.y,  y_top + local.x)
+# Drawing Rect2(lx, -ROPE_BORDER_H, dw, ROPE_BORDER_H) in local space maps to
+# a vertical stripe of width ROPE_BORDER_H at screen-x = x..x+ROPE_BORDER_H.
+func _draw_rope_border_vert(x: float, y_top: float, h: float) -> void:
+	if _rope_tex == null:
+		draw_line(Vector2(x + ROPE_BORDER_H * 0.5, y_top),
+			Vector2(x + ROPE_BORDER_H * 0.5, y_top + h),
+			Color(0.65, 0.50, 0.28, 0.80), ROPE_BORDER_H)
+		return
+
+	# Drop shadow — drawn behind the rope (in screen space, before transform)
+	draw_rect(Rect2(x + 0, y_top + 2.0, ROPE_BORDER_H, h), Color(0.0, 0.0, 0.0, 0.25))
+
+	draw_set_transform(Vector2(x, y_top), PI / 2.0, Vector2.ONE)
+
+	var cols: int = int(ceil(h / ROPE_TILE_W)) + 1
+	for col: int in range(cols):
+		var lx: float      = float(col) * ROPE_TILE_W
+		var dest_x1: float = maxf(lx, 0.0)
+		var dest_x2: float = minf(lx + ROPE_TILE_W, h)
+		if dest_x2 <= dest_x1:
+			continue
+		var dw:     float = dest_x2 - dest_x1
+		var src_ox: float = (dest_x1 - lx) / ROPE_TILE_W * ROPE_SRC.size.x
+		var src_w:  float = dw / ROPE_TILE_W * ROPE_SRC.size.x
+		draw_texture_rect_region(
+			_rope_tex,
+			Rect2(dest_x1, -ROPE_BORDER_H, dw, ROPE_BORDER_H),
+			Rect2(ROPE_SRC.position.x + src_ox, ROPE_SRC.position.y, src_w, ROPE_SRC.size.y)
+		)
+
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+# Corner piece — atlas tile is └; flip_h mirrors it to ┘, flip_v to ┌, both to ┐.
+# Display size matches ROPE_BORDER_H × ROPE_BORDER_H.
+func _draw_rope_corner(x: float, y: float, flip_h: bool, flip_v: bool = false) -> void:
+	if _rope_tex == null:
+		return
+	var s: float       = ROPE_BORDER_H
+	# Drop shadow — in screen space before any transform
+	draw_rect(Rect2(x + 0, y + 2.0, s, s), Color(0.0, 0.0, 0.0, 0.25))
+	var pivot_x: float = x + s if flip_h else x
+	var pivot_y: float = y + s if flip_v else y
+	var scale_x: float = -1.0  if flip_h else 1.0
+	var scale_y: float = -1.0  if flip_v else 1.0
+	draw_set_transform(Vector2(pivot_x, pivot_y), 0.0, Vector2(scale_x, scale_y))
+	draw_texture_rect_region(_rope_tex, Rect2(0.0, 0.0, s, s), ROPE_CORNER_SRC)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+# ------------------------------------------------------------------ #
+#  Cargo console (centre, lower panel)                                #
+# ------------------------------------------------------------------ #
+
+func _draw_cargo(area: Rect2) -> void:
+	var font:    Font = ThemeDB.fallback_font
+	var font_sz: int  = 13
+
+	# One solid inset — content starts below the rope border
+	var inset: Rect2 = Rect2(
+		area.position.x + PANEL_PAD,
+		area.position.y + ROPE_BORDER_H + 8.0,
+		area.size.x - PANEL_PAD * 2.0,
+		area.size.y - ROPE_BORDER_H - PANEL_PAD - 4.0
+	)
+	draw_rect(inset, Color(0.06, 0.04, 0.03, 0.92))
+	_draw_inset_bevel(inset)
+
+	# "CARGO" label inside the inset
+	draw_string(font,
+		Vector2(inset.position.x + 8.0, inset.position.y + font_sz + 4.0),
+		"CARGO", HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz,
+		Color(0.78, 0.68, 0.48))
+
+	# Empty slot row — square insets centred inside the inset
+	var slot_h:   float = inset.size.y - float(font_sz) - 16.0
+	var slot_w:   float = slot_h
+	var slot_gap: float = 6.0
+	var n:        int   = 8
+	var total_w:  float = float(n) * slot_w + float(n - 1) * slot_gap
+	var start_x:  float = inset.position.x + (inset.size.x - total_w) / 2.0
+	var slot_y:   float = inset.position.y + float(font_sz) + 8.0
+
+	for i: int in range(n):
+		var sr: Rect2 = Rect2(start_x + float(i) * (slot_w + slot_gap), slot_y, slot_w, slot_h)
+		draw_rect(sr, Color(0.04, 0.03, 0.02, 0.85))
+		_draw_inset_bevel(sr)
+
+
+# ------------------------------------------------------------------ #
+#  Inset bevel — dark top/left shadow, warm bottom/right highlight    #
+# ------------------------------------------------------------------ #
+
+func _draw_inset_bevel(rect: Rect2) -> void:
+	var shadow:    Color = Color(0.0,  0.0,  0.0,  0.70)
+	var highlight: Color = Color(0.65, 0.50, 0.28, 0.45)
+	var w: float = 2.0
+
+	var tl: Vector2 = rect.position
+	var tr: Vector2 = Vector2(rect.end.x,      rect.position.y)
+	var bl: Vector2 = Vector2(rect.position.x, rect.end.y)
+	var br: Vector2 = rect.end
+
+	draw_line(tl, tr, shadow,    w)  # top    — in shadow
+	draw_line(tl, bl, shadow,    w)  # left   — in shadow
+	draw_line(bl, br, highlight, w)  # bottom — catches light
+	draw_line(tr, br, highlight, w)  # right  — catches light
 
 
 # ------------------------------------------------------------------ #
@@ -134,7 +544,6 @@ func _world_to_map(world_xz: Vector2) -> Vector2:
 
 func _on_island_discovered(p_island_name: String, world_pos: Vector2) -> void:
 	_islands.append(world_pos)
-
 	_toast_label.text = "Discovered: " + p_island_name
 
 	if _toast_tween:

@@ -140,10 +140,25 @@ Logic must feel real. Invention is a consequence of encounter, not a menu choice
   - Produces resources over time, joins the trade network
 - ❓ Can trade routes be disrupted? (Storms, mishaps — probably yes, not by war)
 
+#### Voyage Resources (implemented) ✅
+
+| Resource | Starting amount | Max | Drain rate |
+|---|---|---|---|
+| Food | 20 | 20 | 1 unit / crew / in-game day |
+| Water | 20 | 20 | 1 unit / crew / in-game day |
+
+- Dinghy starts with 2 crew → 2 units/day → 10-day range → ~150 real minutes before empty
+- Drain is real-time and continuous (not turn-based); paced to feel slow, not anxious
+- **Morale** is computed (not stored): `min(food_pct, water_pct)` — wires into crew behaviour later
+- Replenishment: fishing, foraging, island resources — TBD mechanics
+- `VoyageResources` autoload owns food/water/crew_count; `WorldClock` autoload owns time_of_day
+
 ### 8. Time ✅
 
 - **Real-time, accelerated** — like most "real-time" strategy/exploration games ✅
-- ❓ Exact day length in real minutes (TBD — probably 10–20 min/day to start, tunable)
+- **Day length: 15 real minutes** ✅ — `WorldClock.DAY_LENGTH_SECONDS = 900.0` (tunable constant)
+  - 20 min was Minecraft's proven sweet spot; 15 min suits a sailing game with multi-day voyages
+  - Future feature: time-scale multiplier (slow/normal/fast) — architecture is ready for it
 - **Night:** different content — different fish, nocturnal animals, changed mood
 - Food is a genuine resource — crew needs to eat, drives fishing/foraging/farming
 - **Navigation harder at night** without a compass (stars help, but only if you know them)
@@ -199,7 +214,7 @@ Current world: 200×200 units, 5–7 islands. Prototype scale only.
 | Island generation | ✅ | Needs: larger size, biome types, resource assignment |
 | Discovery system | ✅ | Needs: island data (type, resources, peoples) |
 | Minimap | ✅ | Needs: island type icons, settlement markers, trade routes |
-| HUD | 🔧 | Current: minimap only. Needs full redesign for resources/crew/time |
+| HUD | 🔧 | Day/night arc + Food/Water bars added. Needs: crew panel, time-of-day label, voyage log |
 
 ---
 
@@ -264,6 +279,6 @@ Pinch-to-zoom replaces scroll wheel. ✅
 
 ---
 
-*Last updated: 2026-02-20*
+*Last updated: 2026-02-24*
 *This document is the design source of truth. Consult before building any major new system.*
 *Philosophy: knowledge and compassion are the currency. Diverse peoples thrive when connected.*
