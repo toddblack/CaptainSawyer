@@ -9,6 +9,7 @@
 [ext_resource type="Script" uid="uid://4i7xcvsuh8en" path="res://scripts/fog_of_war.gd" id="8_fog"]
 [ext_resource type="Shader" path="res://assets/materials/wake_foam.gdshader" id="9_wake_foam"]
 [ext_resource type="Script" path="res://scripts/boat_visual.gd" id="10_boat_visual"]
+[ext_resource type="Script" path="res://scripts/world_lighting.gd" id="11_world_lighting"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_ocean"]
 size = Vector2(1000, 1000)
@@ -81,12 +82,31 @@ damping_min = 2.5
 damping_max = 4.0
 color_ramp = SubResource("GradientTexture1D_wake")
 
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.13, 0.32, 0.80, 1)
+sky_horizon_color = Color(0.58, 0.76, 0.95, 1)
+ground_horizon_color = Color(0.29, 0.38, 0.47, 1)
+ground_bottom_color = Color(0.01, 0.02, 0.07, 1)
+
+[sub_resource type="Sky" id="Sky_world"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_world"]
+background_mode = 2
+sky = SubResource("Sky_world")
+ambient_light_source = 3
+ambient_light_energy = 0.3
+
 [node name="Main" type="Node3D" unique_id=1162207363]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_world")
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1545804316]
 transform = Transform3D(1, 0, 0, 0, 0.707107, 0.707107, 0, -0.707107, 0.707107, 0, 30, 30)
 projection = 1
 size = 12.0
+near = -200.0
 far = 500.0
 script = ExtResource("3_camera")
 follow_target = NodePath("../Boat")
@@ -95,6 +115,9 @@ follow_target = NodePath("../Boat")
 transform = Transform3D(0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, -0.75, 0.433013, 0, 10, 0)
 light_energy = 1.2
 shadow_enabled = true
+shadow_bias = 0.08
+shadow_normal_bias = 2.0
+script = ExtResource("11_world_lighting")
 
 [node name="Ocean" type="MeshInstance3D" parent="." unique_id=1879645382]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.002108097, 0.034050822, -0.020046711)
@@ -138,7 +161,7 @@ emitting = false
 process_material = SubResource("ParticleProcessMaterial_bow_right")
 draw_pass_1 = SubResource("PlaneMesh_wake")
 
-[node name="FogOfWar" type="Node3D" parent="." unique_id=200000005]
+[node name="FogOfWar" type="Node3D" parent="." unique_id=200000005 groups=["fog_of_war"]]
 script = ExtResource("8_fog")
 
 [node name="IslandSpawner" type="Node3D" parent="." unique_id=200000001]

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \":*)",
+      "Bash(python3:*)",
+      "Bash(pip install pillow -q)",
+      "Bash(git add scripts/hud.gd assets/textures/rope_segments.png assets/textures/rope_segments.png.import assets/textures/wood_nautical.png assets/textures/wood_nautical.png.import scripts/voyage_resources.gd scripts/voyage_resources.gd.uid scripts/world_clock.gd scripts/world_clock.gd.uid goals/game_design.md project.godot scripts/island.gd)",
+      "Bash(git commit:*)",
+      "WebFetch(domain:opengameart.org)",
+      "WebFetch(domain:kaylousberg.itch.io)"
+    ]
+  }
+}

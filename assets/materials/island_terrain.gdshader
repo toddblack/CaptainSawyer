@@ -3,7 +3,7 @@ shader_type spatial;
 // counter-clockwise from the isometric camera's screen-space perspective,
 // which Godot 4/Vulkan treats as back-faces.  Disabling culling lets both
 // sides render; the waterline discard still hides the ocean-level underside.
-render_mode unshaded, cull_disabled;
+render_mode cull_disabled;  // unshaded removed — terrain now receives shadows
 
 // ── Tile atlas ────────────────────────────────────────────────────────────
 // 4×4 grid of 256-px tiles (1024×1024 atlas).  Each tile_offset selects the
@@ -28,6 +28,12 @@ uniform float world_tile_size = 2.0;
 uniform float has_river   = 0.0;
 uniform float river_angle = 0.0;
 uniform float river_width = 1.0;
+
+// Radial biome tint — coast vs interior colour zones.
+uniform vec2  island_center  = vec2(0.0, 0.0);
+uniform float island_radius  = 30.0;
+uniform vec4  coastal_tint   : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform vec4  interior_tint  : source_color = vec4(1.0, 1.0, 1.0, 1.0);
 
 varying vec3  v_world_pos;
 varying float v_height;
@@ -72,6 +78,11 @@ void fragment() {
 	float t_grass = smoothstep(blend_low,  blend_high, v_height);
 	float t_rock  = smoothstep(rock_low,   rock_high,  v_height);
 	vec4  col     = mix(mix(beach_col, grass_col, t_grass), rock_col, t_rock);
+
+	// Radial biome tint: interior_t = 1 at centre, 0 near coast.
+	float radial_dist = length(wxz - island_center);
+	float interior_t  = 1.0 - smoothstep(island_radius * 0.25, island_radius * 0.75, radial_dist);
+	col.rgb *= mix(coastal_tint.rgb, interior_tint.rgb, interior_t);
 
 	if (has_river > 0.5) {
 		float cos_r  = cos(river_angle);

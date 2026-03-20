@@ -30,11 +30,11 @@ const NAME_POOL: Array[String] = [
 	"Brine Witch Rock",
 ]
 
-const ISLAND_COUNT_MIN  := 10
-const ISLAND_COUNT_MAX  := 16
+const ISLAND_COUNT_MIN  := 6
+const ISLAND_COUNT_MAX  := 10
 const SPAWN_MIN         := -460.0
 const SPAWN_MAX         :=  460.0
-const MIN_SPACING       := 140.0
+const MIN_SPACING       := 280.0
 const MIN_CENTER_DIST   := 80.0
 
 
@@ -42,8 +42,8 @@ func _ready() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 
-	# Home island — guaranteed near the boat's start position for quick testing
-	var home_pos := Vector2(0.0, 80.0)
+	# Home island — far enough that the boat spawns in open water (~60 units from shore)
+	var home_pos := Vector2(0.0, 160.0)
 	_spawn_home_island(home_pos)
 	var placed: Array[Vector2] = [home_pos]
 
@@ -80,10 +80,10 @@ func _ready() -> void:
 func _spawn_home_island(pos2d: Vector2) -> void:
 	var island := IslandScript.new()
 	island.island_name      = "Sawyer's Rest"
-	island.discovery_radius = 80.0
 	island.position         = Vector3(pos2d.x, 0.0, pos2d.y)
 	island.island_type      = Island.IslandType.TROPICAL
-	island.base_radius      = 30.0
+	island.base_radius      = 80.0
+	island.discovery_radius = island.base_radius * 1.3  # shore reaches ~base_radius from centre
 	island.num_trees        = 45
 	add_child(island)
 	var hud: Node = get_tree().get_first_node_in_group("hud")
@@ -93,9 +93,8 @@ func _spawn_home_island(pos2d: Vector2) -> void:
 
 func _spawn_island(pos2d: Vector2, island_name: String, rng: RandomNumberGenerator) -> void:
 	var island := IslandScript.new()
-	island.island_name      = island_name
-	island.discovery_radius = 80.0
-	island.position         = Vector3(pos2d.x, 0.0, pos2d.y)
+	island.island_name = island_name
+	island.position    = Vector3(pos2d.x, 0.0, pos2d.y)
 
 	# Type first — radius and tree count vary by type
 	var itype: int = rng.randi_range(0, 3)
@@ -103,20 +102,21 @@ func _spawn_island(pos2d: Vector2, island_name: String, rng: RandomNumberGenerat
 
 	var radius: float
 	match itype:
-		0: radius = rng.randf_range(18.0, 55.0)  # TROPICAL  — big lush islands
-		1: radius = rng.randf_range(12.0, 38.0)  # VOLCANIC  — compact but tall
-		2: radius = rng.randf_range(25.0, 65.0)  # ATOLL     — wide and flat
-		3: radius = rng.randf_range(22.0, 55.0)  # HIGHLAND  — medium to large
-		_: radius = rng.randf_range(15.0, 40.0)
-	island.base_radius = radius
+		0: radius = rng.randf_range( 50.0, 180.0)  # TROPICAL  — big lush islands
+		1: radius = rng.randf_range( 35.0, 120.0)  # VOLCANIC  — compact but tall
+		2: radius = rng.randf_range( 80.0, 220.0)  # ATOLL     — wide and flat
+		3: radius = rng.randf_range( 70.0, 180.0)  # HIGHLAND  — medium to large
+		_: radius = rng.randf_range( 50.0, 120.0)
+	island.base_radius      = radius
+	island.discovery_radius = radius * 1.3  # shore reaches ~base_radius from centre
 
-	# Tree count scales with island area; density_threshold handles clustering
+	# Tree count scales with island area; caps prevent load() stalls on giant islands
 	match itype:
-		0: island.num_trees = int(radius * rng.randf_range(1.4, 2.2))   # TROPICAL
-		1: island.num_trees = int(radius * rng.randf_range(0.3, 0.6))   # VOLCANIC
-		2: island.num_trees = int(radius * rng.randf_range(0.5, 0.9))   # ATOLL
-		3: island.num_trees = int(radius * rng.randf_range(1.8, 3.0))   # HIGHLAND
-		_: island.num_trees = int(radius * rng.randf_range(1.0, 1.5))
+		0: island.num_trees = min(int(radius * rng.randf_range(1.4, 2.2)), 120)  # TROPICAL
+		1: island.num_trees = min(int(radius * rng.randf_range(0.3, 0.6)),  30)  # VOLCANIC
+		2: island.num_trees = min(int(radius * rng.randf_range(0.5, 0.9)),  60)  # ATOLL
+		3: island.num_trees = min(int(radius * rng.randf_range(1.8, 3.0)), 150)  # HIGHLAND
+		_: island.num_trees = min(int(radius * rng.randf_range(1.0, 1.5)), 100)
 
 	add_child(island)
 

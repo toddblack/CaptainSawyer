@@ -1,4 +1,5 @@
 extends Node3D
+class_name FogOfWar
 
 # ------------------------------------------------------------------ #
 #  Fog of War — 2D CanvasLayer overlay                                #
@@ -172,10 +173,19 @@ func _process(_delta: float) -> void:
 		_reveal(boat_xz)
 
 
-func _reveal(world_xz: Vector2) -> void:
+## Clear a world-space circle at world_xz with the given radius.
+## Called by Island on discovery to expose tall terrain's height-parallax
+## shadow — the Y=0 footprint of a peak at height h is offset by –h world
+## units in the camera direction, so islands need a larger reveal than the
+## boat's normal travelling radius.
+func reveal_area(world_xz: Vector2, world_radius: float) -> void:
+	_reveal(world_xz, world_radius)
+
+
+func _reveal(world_xz: Vector2, world_radius: float = REVEAL_RADIUS) -> void:
 	var cx := int((world_xz.x + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
 	var cy := int((world_xz.y + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
-	var r   := int(REVEAL_RADIUS / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
+	var r   := int(world_radius / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
 
 	var changed := false
 	for dy in range(-r, r + 1):
