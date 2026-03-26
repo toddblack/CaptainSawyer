@@ -13,8 +13,13 @@ class_name FogOfWar
 
 const FOG_TEX_SIZE   := 256
 const WORLD_HALF     := 500.0
-const REVEAL_RADIUS  := 55.0
 const MOVE_THRESHOLD := 0.5
+
+# Base reveal radius for Tier 1 (Dinghy). Each subsequent ship tier adds ~12%.
+# Tier 1: 26  |  Tier 2: 29  |  Tier 3: 33  |  Tier 4: 37
+const REVEAL_RADIUS_BASE: float = 26.0
+
+var _reveal_radius: float = REVEAL_RADIUS_BASE  # updated by set_ship_tier()
 
 var _fog_image: Image
 var _fog_tex:   ImageTexture
@@ -22,6 +27,9 @@ var _fog_mat:   ShaderMaterial
 var _camera:    Camera3D
 var _boat:      Node3D
 var _last_boat_xz := Vector2(9999.0, 9999.0)
+
+var _startup_frames: int = 0
+var _startup_pos:    Vector2 = Vector2.ZERO
 
 
 const SHADER_CODE := """
@@ -79,7 +87,19 @@ void fragment() {
 	                * smoothstep(1.0, 1.0 - e, fog_uv.y);
 
 	vec2 fog_uv_safe = clamp(fog_uv, 0.0, 1.0);
-	float fog_sample = texture(fog_tex, fog_uv_safe).r;
+	// 9-tap Gaussian blur on the fog texture.
+	// s = 3 texels at 256px resolution → ±12 world units, same as before.
+	float s = 3.0 / 256.0;
+	float fog_sample =
+		texture(fog_tex, clamp(fog_uv_safe,                     0.0, 1.0)).r * 0.36
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2( s,  0.0), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2(-s,  0.0), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2( 0.0,  s), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2( 0.0, -s), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2( s,   s),  0.0, 1.0)).r * 0.04
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2(-s,   s),  0.0, 1.0)).r * 0.04
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2( s,  -s),  0.0, 1.0)).r * 0.04
+		+ texture(fog_tex, clamp(fog_uv_safe + vec2(-s,  -s),  0.0, 1.0)).r * 0.04;
 	// edge_fade=1 inside map, 0 outside → outside blends to opaque cloud.
 	float fog_mask = mix(1.0, fog_sample, edge_fade);
 
@@ -92,7 +112,11 @@ void fragment() {
 	// uv1r ≈ 22°, uv2r ≈ 55° — neither aligns with the isometric 45° screen axes.
 	vec2 uv1r = vec2(uv1.x * 0.927 - uv1.y * 0.374, uv1.x * 0.374 + uv1.y * 0.927);
 	vec2 uv2r = vec2(uv2.x * 0.574 - uv2.y * 0.819, uv2.x * 0.819 + uv2.y * 0.574);
-	float n = smooth_noise(uv1r) * 0.6 + smooth_noise(uv2r) * 0.4;
+	// Domain-warp: offset each layer's UV by a low-freq noise field so the value-noise
+	// grid never aligns into visible diagonal bands across the screen.
+	vec2 warp = vec2(smooth_noise(uv2r + vec2(3.7, 1.3)),
+	                 smooth_noise(uv1r + vec2(1.7, 4.2))) * 0.22;
+	float n = smooth_noise(uv1r + warp) * 0.6 + smooth_noise(uv2r - warp * 0.5) * 0.4;
 
 	COLOR = vec4(cloud_color.rgb * (0.90 + n * 0.10), fog_mask * (0.72 + n * 0.22));
 }
@@ -116,8 +140,10 @@ func _find_nodes() -> void:
 	if _boat:
 		print("FogOfWar: found boat at ", _boat.global_position)
 		var start := Vector2(_boat.global_position.x, _boat.global_position.z)
-		_last_boat_xz = start
-		_reveal(start)
+		_last_boat_xz  = start
+		_startup_pos   = start
+		_startup_frames = 3
+		_reveal(start, _reveal_radius)
 	else:
 		print("FogOfWar: boat NOT found")
 
@@ -167,10 +193,21 @@ func _process(_delta: float) -> void:
 		_find_nodes()
 		return
 
+	if _startup_frames > 0:
+		_startup_frames -= 1
+		_reveal(_startup_pos, _reveal_radius)
+		return
+
 	var boat_xz := Vector2(_boat.global_position.x, _boat.global_position.z)
 	if boat_xz.distance_to(_last_boat_xz) >= MOVE_THRESHOLD:
 		_last_boat_xz = boat_xz
-		_reveal(boat_xz)
+		_reveal(boat_xz, _reveal_radius)
+
+
+## Call when the player's ship tier changes (1–4).
+## Each tier adds ~12 % visibility over the previous one.
+func set_ship_tier(tier: int) -> void:
+	_reveal_radius = REVEAL_RADIUS_BASE * pow(1.12, float(tier - 1))
 
 
 ## Clear a world-space circle at world_xz with the given radius.
@@ -182,28 +219,46 @@ func reveal_area(world_xz: Vector2, world_radius: float) -> void:
 	_reveal(world_xz, world_radius)
 
 
-func _reveal(world_xz: Vector2, world_radius: float = REVEAL_RADIUS) -> void:
-	var cx := int((world_xz.x + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
-	var cy := int((world_xz.y + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
-	var r   := int(world_radius / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
+func _reveal(world_xz: Vector2, world_radius: float) -> void:
+	var cx: int = int((world_xz.x + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
+	var cy: int = int((world_xz.y + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
+	var r_px: int = int(world_radius / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
+	# Search to 3× r_px to capture the full Gaussian tail (exp(-9) ≈ 0.0001).
+	var r_search: int = r_px * 3
+	var r_search_sq: int = r_search * r_search
+	var size: int = FOG_TEX_SIZE
 
+	# Multiplicative Gaussian clearance via PackedByteArray (one get_data / set_data pair).
+	# Each call multiplies remaining fog by (1 - gaussian(t)), where t = dist / r_px.
+	# Overlapping circles compound: a point hit by N passes is cleared to (1-g)^N → 0.
+	# Corridor walls (t≈1 from every passing circle) are hit many times and fully clear,
+	# eliminating the straight-tangent seam that plagued the old smoothstep+min approach.
+	var data: PackedByteArray = _fog_image.get_data()
 	var changed := false
-	for dy in range(-r, r + 1):
-		for dx in range(-r, r + 1):
-			var dist := sqrt(float(dx * dx + dy * dy))
-			if dist > r:
+
+	for dy: int in range(-r_search, r_search + 1):
+		for dx: int in range(-r_search, r_search + 1):
+			if dx * dx + dy * dy > r_search_sq:
 				continue
-			var px := cx + dx
-			var py := cy + dy
-			if px < 0 or px >= FOG_TEX_SIZE or py < 0 or py >= FOG_TEX_SIZE:
+			var px: int = cx + dx
+			var py: int = cy + dy
+			if px < 0 or px >= size or py < 0 or py >= size:
 				continue
-			var t      := dist / float(r)
-			var target := smoothstep(0.0, 1.0, t * 1.15 - 0.15)
-			var current := _fog_image.get_pixel(px, py).r
-			if target < current:
-				_fog_image.set_pixel(px, py, Color(target, target, target, 1.0))
+			var dist: float = sqrt(float(dx * dx + dy * dy))
+			var t: float = dist / float(r_px)
+			# exp(-1.5·t²): 1.0 at center (full clear), ~0.22 at t=1, ~0.002 at t=2
+			# Sigma=1.5 keeps the halo tighter — accumulated passes clear less far out.
+			var contribution: float = exp(-t * t * 1.5)
+			var idx: int = (py * size + px) * 4
+			var current_byte: int = int(data[idx])
+			var target_byte: int = int(float(current_byte) * (1.0 - contribution))
+			if target_byte < current_byte:
+				data[idx + 0] = target_byte
+				data[idx + 1] = target_byte
+				data[idx + 2] = target_byte
 				changed = true
 
 	if changed:
+		_fog_image.set_data(size, size, false, Image.FORMAT_RGBA8, data)
 		_fog_tex = ImageTexture.create_from_image(_fog_image)
 		_fog_mat.set_shader_parameter("fog_tex", _fog_tex)

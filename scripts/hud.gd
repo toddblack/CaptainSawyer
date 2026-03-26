@@ -9,6 +9,15 @@ const WORLD_HALF:     float = 500.0
 const CELL_SIZE:      float = 50.0
 const EXPLORE_RADIUS: int   = 2
 
+const TOAST_W: float = 440.0
+const TOAST_H: float = 220.0
+
+const TOAST_SHADOW_LAYERS: Array[Vector3] = [
+	Vector3(3.0,  4.0,  0.25),
+	Vector3(6.0,  8.0,  0.18),
+	Vector3(10.0, 13.0, 0.10),
+]
+
 # Fog cell grid: Vector2i -> true means explored
 var _explored: Dictionary = {}
 
@@ -21,9 +30,13 @@ var _boat: Node3D = null
 # Minimap rect — set each frame inside _draw_bottom_panel()
 var _map_rect: Rect2
 
-# Discovery toast
-var _toast_label: Label
-var _toast_tween: Tween
+# Discovery toast — drawn entirely in _draw() to share the same coord space as the arc.
+# No child Controls involved: position is guaranteed correct without layout fights.
+var _parchment_tex:   Texture2D = null
+var _toast_alpha:     float     = 0.0   # tweened 0→1 on show, 1→0 on dismiss
+var _toast_name_text: String    = ""
+var _toast_res_text:  String    = ""
+var _toast_tween:     Tween     = null
 
 # Arc panel clipping — bodies live in a child Control so clip_children masks them
 var _arc_clip:   Control = null
@@ -77,19 +90,8 @@ func _ready() -> void:
 	_wood_tex = load("res://assets/textures/wood_nautical.png") as Texture2D
 	_rope_tex = load("res://assets/textures/rope_segments.png") as Texture2D
 
-	# Toast label — sits below the arc panel
-	_toast_label = Label.new()
-	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_toast_label.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
-	_toast_label.add_theme_font_size_override("font_size", 20)
-	_toast_label.add_theme_color_override("font_color",        Color(1.0, 0.95, 0.7))
-	_toast_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.8))
-	_toast_label.add_theme_constant_override("shadow_offset_x", 1)
-	_toast_label.add_theme_constant_override("shadow_offset_y", 1)
-	_toast_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	_toast_label.position.y = ARC_PANEL_H + 8.0
-	_toast_label.modulate.a = 0.0
-	add_child(_toast_label)
+	# Toast drawn entirely in _draw() — load texture here, no child nodes needed
+	_parchment_tex = load("res://assets/textures/toastBG.webp") as Texture2D
 
 	# Initialise _map_rect to a sane default before first _draw()
 	var vp: Rect2 = get_viewport_rect()
@@ -138,6 +140,8 @@ func _draw() -> void:
 	var vp: Rect2 = get_viewport_rect()
 	_draw_day_night_arc(vp)
 	_draw_bottom_panel(vp)
+	if _toast_alpha > 0.0:
+		_draw_toast(vp)
 
 
 # ------------------------------------------------------------------ #
@@ -539,16 +543,124 @@ func _draw_inset_bevel(rect: Rect2) -> void:
 
 
 # ------------------------------------------------------------------ #
-#  Discovery toast                                                     #
+#  Discovery toast — drawn entirely in _draw(), no child Controls     #
 # ------------------------------------------------------------------ #
 
-func _on_island_discovered(p_island_name: String, world_pos: Vector2) -> void:
+func _draw_toast(vp: Rect2) -> void:
+	var font:    Font = ThemeDB.fallback_font
+	var tx: float = vp.size.x * 0.5 - TOAST_W * 0.5
+	var ty: float = ARC_PANEL_H + 8.0
+
+	# Soft drop shadow — 3 layers at increasing offsets and decreasing opacity
+	if _parchment_tex != null:
+		for layer: Vector3 in TOAST_SHADOW_LAYERS:
+			var sa: float = layer.z * _toast_alpha
+			draw_texture_rect(
+				_parchment_tex,
+				Rect2(tx + layer.x, ty + layer.y, TOAST_W, TOAST_H),
+				false,
+				Color(0.0, 0.0, 0.0, sa)
+			)
+		# Parchment background
+		draw_texture_rect(
+			_parchment_tex,
+			Rect2(tx, ty, TOAST_W, TOAST_H),
+			false,
+			Color(1.0, 1.0, 1.0, _toast_alpha)
+		)
+	else:
+		# Fallback if texture failed to load
+		draw_rect(Rect2(tx, ty, TOAST_W, TOAST_H), Color(0.92, 0.84, 0.65, _toast_alpha))
+
+	# Island name — large, centred on scroll
+	var name_sz: int  = 22
+	var name_y:  float = ty + TOAST_H * 0.26
+	draw_string(font,
+		Vector2(tx, name_y),
+		_toast_name_text,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		TOAST_W,
+		name_sz,
+		Color(0.22, 0.12, 0.05, _toast_alpha)
+	)
+
+	# Resource line — smaller, just below name
+	if _toast_res_text != "":
+		var res_sz: int   = 14
+		var res_y:  float = name_y + float(name_sz) + 10.0
+		draw_string(font,
+			Vector2(tx, res_y),
+			_toast_res_text,
+			HORIZONTAL_ALIGNMENT_CENTER,
+			TOAST_W,
+			res_sz,
+			Color(0.35, 0.22, 0.10, _toast_alpha)
+		)
+
+	# "tap to dismiss" hint — bottom of scroll
+	var hint_sz: int   = 12
+	var hint_y:  float = ty + TOAST_H - 38.0
+	draw_string(font,
+		Vector2(tx, hint_y),
+		"Tap To Dismiss",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		TOAST_W,
+		hint_sz,
+		Color(0.40, 0.28, 0.15, _toast_alpha * 0.70)
+	)
+
+
+func _set_toast_alpha(a: float) -> void:
+	_toast_alpha = a
+
+
+func _on_island_discovered(p_island_name: String, world_pos: Vector2, res: Dictionary) -> void:
 	_islands.append(world_pos)
-	_toast_label.text = "Discovered: " + p_island_name
+	_toast_name_text = p_island_name
+
+	# Build a human-readable resource list: "iron ore · lodestone · copper"
+	var names: Array[String] = []
+	for key: String in res.keys():
+		names.append(key.replace("_", " "))
+	_toast_res_text = " · ".join(names)
 
 	if _toast_tween:
 		_toast_tween.kill()
 	_toast_tween = create_tween()
-	_toast_tween.tween_property(_toast_label, "modulate:a", 1.0, 0.3)
-	_toast_tween.tween_interval(2.5)
-	_toast_tween.tween_property(_toast_label, "modulate:a", 0.0, 0.8)
+	_toast_tween.tween_method(_set_toast_alpha, _toast_alpha, 1.0, 0.4).set_ease(Tween.EASE_OUT)
+
+
+func _input(event: InputEvent) -> void:
+	if _toast_alpha <= 0.0:
+		return
+	var pressed: bool = false
+	if event is InputEventMouseButton:
+		var mb: InputEventMouseButton = event as InputEventMouseButton
+		pressed = mb.pressed
+	elif event is InputEventScreenTouch:
+		var touch: InputEventScreenTouch = event as InputEventScreenTouch
+		pressed = touch.pressed
+	if not pressed:
+		return
+	var vp: Rect2 = get_viewport_rect()
+	var toast_rect: Rect2 = Rect2(
+		vp.size.x * 0.5 - TOAST_W * 0.5,
+		ARC_PANEL_H + 8.0,
+		TOAST_W,
+		TOAST_H
+	)
+	var pos: Vector2 = Vector2.ZERO
+	if event is InputEventMouseButton:
+		pos = (event as InputEventMouseButton).position
+	elif event is InputEventScreenTouch:
+		pos = (event as InputEventScreenTouch).position
+	if toast_rect.has_point(pos):
+		get_viewport().set_input_as_handled()
+		_dismiss_toast()
+
+
+func _dismiss_toast() -> void:
+	if _toast_tween:
+		_toast_tween.kill()
+	_toast_tween = create_tween()
+	_toast_tween.tween_method(_set_toast_alpha, _toast_alpha, 0.0, 0.35).set_ease(Tween.EASE_IN)

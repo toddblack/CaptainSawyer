@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:godotshaders.com)",
+      "WebFetch(domain:godotforums.org)",
+      "WebFetch(domain:forum.godotengine.org)",
+      "WebFetch(domain:docs.godotengine.org)",
+      "WebFetch(domain:petermcp.github.io)",
+      "WebFetch(domain:andrewhungblog.wordpress.com)",
+      "WebFetch(domain:blog.gemserk.com)",
+      "WebFetch(domain:brendankeesing.com)",
+      "WebFetch(domain:www.gamedev.net)",
+      "WebFetch(domain:www.dlab.ninja)",
+      "WebFetch(domain:kvachev.com)",
+      "WebFetch(domain:hylu.dev)",
+      "WebFetch(domain:www.jdxdev.com)",
+      "WebFetch(domain:successknocks.com)",
+      "WebFetch(domain:minmax.itch.io)",
+      "WebFetch(domain:technology.riotgames.com)",
+      "WebFetch(domain:blog.frost.kiwi)",
+      "WebFetch(domain:oscarpm5.github.io)"
+    ]
+  }
+}

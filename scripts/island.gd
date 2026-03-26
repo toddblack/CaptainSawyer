@@ -1,7 +1,7 @@
 extends StaticBody3D
 class_name Island
 
-signal island_discovered(island_name: String, world_pos: Vector2)
+signal island_discovered(island_name: String, world_pos: Vector2, resources: Dictionary)
 
 enum IslandType { TROPICAL, VOLCANIC, ATOLL, HIGHLAND }
 
@@ -11,10 +11,20 @@ enum IslandType { TROPICAL, VOLCANIC, ATOLL, HIGHLAND }
 @export var discovery_radius: float      = 18.0
 @export var island_type:      IslandType = IslandType.TROPICAL
 
-var discovered:   bool   = false
-var _boat:        Node3D = null
-var _has_river:   bool   = false
-var _river_angle: float  = 0.0
+var discovered:   bool       = false
+var resources:    Dictionary = {}
+var _boat:        Node3D     = null
+var _has_river:   bool       = false
+var _river_angle: float      = 0.0
+
+# Resources available on each island type.
+# Quantities are scaled by base_radius at assignment time.
+const _RESOURCE_TABLE: Dictionary = {
+	0: ["hardwood", "spices", "food"],              # TROPICAL
+	1: ["lodestone", "iron_ore"],                   # VOLCANIC
+	2: ["coral", "fish"],                           # ATOLL
+	3: ["stone", "clay", "flax"],                   # HIGHLAND
+}
 
 # Terrain shader + single unified atlas
 const _TERRAIN_SHADER = preload("res://assets/materials/island_terrain.gdshader")
@@ -71,6 +81,7 @@ func _ready() -> void:
 	_grid_n = clampi(int(base_radius * 1.5), 64, 128)
 	_setup_noise()
 	_setup_type()
+	_assign_resources()
 	_setup_peaks()
 	_build_materials()
 	_build_geometry()
@@ -96,6 +107,31 @@ func _setup_noise() -> void:
 	_forest_noise.seed       = island_name.hash() + 54321
 	_forest_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	_forest_noise.frequency  = 1.0
+
+
+# ------------------------------------------------------------------ #
+#  Resources                                                           #
+# ------------------------------------------------------------------ #
+
+func _assign_resources() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = island_name.hash() + 11111
+
+	var pool: Array = _RESOURCE_TABLE.get(int(island_type), ["food"])
+
+	# Volcanic islands sometimes have copper (rare, deep-game material)
+	if island_type == IslandType.VOLCANIC and rng.randf() < 0.30:
+		pool = pool.duplicate()
+		pool.append("copper")
+
+	# Highland islands often have iron ore as a bonus resource
+	if island_type == IslandType.HIGHLAND and rng.randf() < 0.50:
+		pool = pool.duplicate()
+		pool.append("iron_ore")
+
+	for res: String in pool:
+		var amount: int = clampi(int(base_radius * rng.randf_range(0.5, 1.2)), 10, 200)
+		resources[res] = amount
 
 
 # ------------------------------------------------------------------ #
@@ -482,7 +518,7 @@ func _physics_process(_delta: float) -> void:
 
 func _discover() -> void:
 	discovered = true
-	island_discovered.emit(island_name, Vector2(global_position.x, global_position.z))
+	island_discovered.emit(island_name, Vector2(global_position.x, global_position.z), resources)
 	# Punch a generous hole in the fog to expose the whole island including
 	# the height-parallax shadow: a peak at height h has its Y=0 fog footprint
 	# offset by ~h world units toward the camera, so we need extra radius.
