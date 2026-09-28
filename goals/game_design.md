@@ -6,8 +6,13 @@
 
 ## Vision
 
-An Age of Exploration game about a small crew who built a boat big enough to leave their island.
-Exploration-first, survival-informed, empire-building through **trade, diplomacy, and shared innovation**.
+**Premise ✅ (canonical — see `goals/storyline.md`):** a deep-space crew crash-lands on an alien
+ocean world. Captain Sawyer washes ashore with two crewmates; the other ten are scattered across
+the sea in abort capsules. No charts, no comms, no idea if anyone else lives here.
+
+Exploration-first, survival-informed. Find your crew, salvage the capsules, learn the alien
+materials, build better boats, push the map outward — and, maybe, meet whoever else is out there
+through **trade, diplomacy, and shared innovation**.
 
 The world advances because *you* brought ideas back from far-off places — and gave ideas away too.
 You don't invent the compass — you find lodestone on a distant island, figure out what it does, and show it to every people you meet along the way.
@@ -24,10 +29,11 @@ Not grimdark. Not a war game. A world worth exploring and worth caring about.
 ## Core Loop
 
 ```
-Start on home island (established, boat already built)
+Start on the crash-site island (Sawyer + Biologist + Surgeon, a small first boat)
     → Sail out into unknown ocean (fog of war)
         → Discover island
-            → Encounter: uninhabited / friendly peoples / wary peoples / resource-rich
+            → Encounter: resources / a capsule & stranded crewmate / wreckage & tech /
+              (much later) signs of — and contact with — inhabitants
                 → Diplomacy: share knowledge, offer materials, earn trust
                 OR Gather: collect materials from terrain/biome
                     → Bring back to home island (or any settlement)
@@ -42,12 +48,13 @@ Start on home island (established, boat already built)
 
 ## Pillars
 
-### 1. Home Island ✅
+### 1. Home Island (crash site) ✅
 
-- The player starts on a **well-established home island** — not primitive, but island-bound
-- The community has already learned enough to build a seaworthy boat
+- The player starts on the island where Sawyer's capsule came down ("Sawyer's Rest")
+- It begins as a survival camp — shelter, capsule salvage, a first improvised boat — and grows
+  into the crew's base as rescued specialists (engineers, agriculturalist…) join
 - Home island is the anchor: save point, return destination, first settlement
-- Feels lived-in from the start — buildings, community, history
+- Sawyer's own capsule lies sunk in the shallows — recoverable later (diving tech)
 - Progression radiates outward from here
 - ❓ Can home island be lost/threatened? (Probably not early game — it's the safety anchor)
 
@@ -114,8 +121,8 @@ Logic must feel real. Invention is a consequence of encounter, not a menu choice
 - Named crew members — not anonymous numbers
 - **Crew can die** — voyages have real stakes (expand rules later)
 - **New crew sources:**
-  - Home port (community members willing to go)
-  - Island peoples met along the way — someone always wants to see the world
+  - The 10 scattered crewmates — found at capsule sites, some injured (see `storyline.md`)
+  - Possibly, much later, inhabitants met along the way — ❓ depends on the inhabitants reveal
 - **Crew level up on their own** through experience (voyages, discoveries, tasks)
 - Skills build naturally — a sailor who navigates a lot gets better at navigation
 - **Roles scale with ship size:**
@@ -147,7 +154,7 @@ Logic must feel real. Invention is a consequence of encounter, not a menu choice
 | Food | 20 | 20 | 1 unit / crew / in-game day |
 | Water | 20 | 20 | 1 unit / crew / in-game day |
 
-- Dinghy starts with 2 crew → 2 units/day → 10-day range → ~150 real minutes before empty
+- Dinghy starts with 2 crew → 2 units/day → 10-day range → ~300 real minutes before empty (30-min days)
 - Drain is real-time and continuous (not turn-based); paced to feel slow, not anxious
 - **Morale** is computed (not stored): `min(food_pct, water_pct)` — wires into crew behaviour later
 - Replenishment: fishing, foraging, island resources — TBD mechanics
@@ -156,8 +163,8 @@ Logic must feel real. Invention is a consequence of encounter, not a menu choice
 ### 8. Time ✅
 
 - **Real-time, accelerated** — like most "real-time" strategy/exploration games ✅
-- **Day length: 15 real minutes** ✅ — `WorldClock.DAY_LENGTH_SECONDS = 900.0` (tunable constant)
-  - 20 min was Minecraft's proven sweet spot; 15 min suits a sailing game with multi-day voyages
+- **Day length: 30 real minutes** ✅ — `WorldClock.DAY_LENGTH_SECONDS = 1800.0` (tunable constant; the only copy — VoyageResources reads it)
+  - Was 15 min; 30 chosen 2026-09-28 — suits multi-day voyages without night coming too often
   - Future feature: time-scale multiplier (slow/normal/fast) — architecture is ready for it
 - **Night:** different content — different fish, nocturnal animals, changed mood
 - Food is a genuine resource — crew needs to eat, drives fishing/foraging/farming
@@ -191,7 +198,8 @@ Speed notes:
 
 ## Scale ✅
 
-Current world: 200×200 units, 5–7 islands. Prototype scale only.
+Current world: 1000×1000 units (starting zone), home island + 6–10 islands of radius 30–220,
+spaced so coastlines never overlap. Seeded: `IslandSpawner.world_seed` reproduces a world exactly.
 
 **Target feel:** Global. The ocean should feel vast and consequential.
 - World size: 2000×2000 minimum, possibly larger
@@ -206,15 +214,17 @@ Current world: 200×200 units, 5–7 islands. Prototype scale only.
 
 | System | Status | Notes |
 |---|---|---|
-| Ocean + water shader | ✅ | Scales fine |
-| Boat movement | ✅ | Tier 1 vessel |
+| Ocean + water shader | ✅ | Depth-based shallows + shore foam that follows real coastlines |
+| Boat movement | ✅ | Tier 1 vessel; touch steering (single finger), keyboard for desktop |
 | Wake + bow wave particles | ✅ | Will update per ship tier |
-| Isometric camera | ✅ | Zoom range may need expanding |
-| Fog of war | ✅ | Core mechanic — perfect |
-| Island generation | ✅ | Needs: larger size, biome types, resource assignment |
-| Discovery system | ✅ | Needs: island data (type, resources, peoples) |
+| Isometric camera | ✅ | Follows boat's physics-interpolated position (no jitter) |
+| Fog of war | ✅ | World-space via depth buffer; minimap shares its texture |
+| Island generation | ✅ | Fractal coastlines, biome zones, rivers, atoll lagoons, threaded build |
+| Island biomes + resources | ✅ | 6 zone types, type-driven resources, resource icons in toast |
+| Discovery system | ✅ | Needs: peoples / inhabitant hints |
 | Minimap | ✅ | Needs: island type icons, settlement markers, trade routes |
-| HUD | 🔧 | Day/night arc + Food/Water bars added. Needs: crew panel, time-of-day label, voyage log |
+| Day/night + seasons | ✅ | WorldClock + world_lighting.gd |
+| HUD | 🔧 | Arc, Food/Water, cargo slots (empty). Needs: crew panel, voyage log |
 
 ---
 
@@ -256,7 +266,8 @@ Pinch-to-zoom replaces scroll wheel. ✅
 - **How is a community's "need" communicated to the player?**
 - **Night navigation without compass** — stars as mechanic?
 - **Exact roguelite carry-over rules** — what persists through death?
-- **In-game day length** in real minutes?
+- **Other sections still assume native peoples from the start** (Islands types, Trade, Diplomacy) —
+  revisit against the stranded-crew premise: when/how do inhabitants enter the story?
 - **Weather/storms** — scope and timing?
 - **Home island threat?** Can it ever be at risk?
 
@@ -264,11 +275,12 @@ Pinch-to-zoom replaces scroll wheel. ✅
 
 ## Build Priority (Current Thinking)
 
-1. **Ship visual** — give tier-1 boat real shape. Immediate, visible, sets the tone. 🎯
-2. **Map scaling** — expand world, more islands, set the stage for everything else
-3. **Day/night cycle** — sky, sun arc, lighting. Foundational visually and mechanically.
-4. **Island biomes + resources** — variety on generation, resource assignment
-5. **Save system** — needed before progression systems are worth building
+1. ~~Ship visual~~ ✅
+2. ~~Map scaling~~ ✅
+3. ~~Day/night cycle~~ ✅
+4. ~~Island biomes + resources~~ ✅ (natural coastlines pass: 2026-09-28)
+5. **Save system** — needed before progression systems are worth building 🎯
+   (world = `world_seed`; also persist fog texture, discovered islands, clock, resources)
 6. **Resource system** — inventory, gathering, basics
 7. **Crew data model** — named crew, roles, needs, leveling
 8. **HUD redesign** — resources, crew, time of day, voyage info
@@ -279,6 +291,6 @@ Pinch-to-zoom replaces scroll wheel. ✅
 
 ---
 
-*Last updated: 2026-02-24*
+*Last updated: 2026-09-28*
 *This document is the design source of truth. Consult before building any major new system.*
 *Philosophy: knowledge and compassion are the currency. Diverse peoples thrive when connected.*

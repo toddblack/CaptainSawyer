@@ -1,9 +1,6 @@
 shader_type spatial;
-// cull_disabled is required: the rectangular grid mesh winds triangles
-// counter-clockwise from the isometric camera's screen-space perspective,
-// which Godot 4/Vulkan treats as back-faces.  Disabling culling lets both
-// sides render; the waterline discard still hides the ocean-level underside.
-render_mode cull_disabled;  // unshaded removed — terrain now receives shadows
+// Default back-face culling: island.gd winds triangles clockwise seen from
+// above (Godot's front face), so only the top surface is rasterised.
 
 // ── Tile atlas ────────────────────────────────────────────────────────────
 // 4×4 grid of 256-px tiles (1024×1024 atlas).  Each tile_offset selects the
@@ -19,29 +16,34 @@ uniform vec2  grass_tile_scale  = vec2(0.25, 0.25);
 uniform vec2  rock_tile_offset  = vec2(0.5,  0.0);
 uniform vec2  rock_tile_scale   = vec2(0.25, 0.25);
 
-uniform float blend_low      = 0.55;
-uniform float blend_high     = 1.20;
+uniform float blend_low      = 0.8;
+uniform float blend_high     = 1.8;
 uniform float rock_low       = 5.0;
 uniform float rock_high      = 8.0;
 uniform float world_tile_size = 2.0;
 
-uniform float has_river   = 0.0;
-uniform float river_angle = 0.0;
-uniform float river_width = 1.0;
+// River — must match Island._river_valley() (island-local space).
+uniform float has_river     = 0.0;
+uniform float river_angle   = 0.0;
+uniform float river_width   = 1.0;
+uniform float river_meander = 0.05;   // 1 / meander wavelength
+uniform float river_start   = 10.0;   // distance from centre where the river begins
 
 // ── Zone-based biome tinting ──────────────────────────────────────────────
 // Up to 4 spatial zones per island.  Each zone carries:
 //   zone_data[i].xy  — local XZ centre (island-space, origin = island centre)
 //   zone_data[i].z   — influence radius
-//   zone_data[i].w   — unused
-// Tints are blended by inverse-distance weights, squared for sharper borders.
+// Gaussian weights — must match Island._zone_weight().
 uniform int  zone_count = 1;
 uniform vec4 zone_data[4];
 uniform vec4 zone_grass_tint[4];
 uniform vec4 zone_rock_tint[4];
 
+// Below this the seabed is hidden by opaque deep water — skip the shading work.
+const float HIDDEN_DEPTH = -12.0;
+
 varying vec3  v_world_pos;
-varying vec2  v_local_xz;    // island-local XZ — used for zone distance
+varying vec2  v_local_xz;    // island-local XZ — zones and river live here
 varying float v_height;
 
 void vertex() {
@@ -70,11 +72,19 @@ vec4 tile(vec2 wxz, vec2 offset, vec2 scale) {
 	       / max(w1 + w2, 0.0001);
 }
 
+float river_mask(vec2 p) {
+	float c      = cos(river_angle);
+	float s      = sin(river_angle);
+	float along  = p.x * c + p.y * s;
+	float perp   = -p.x * s + p.y * c;
+	float across = abs(perp - sin(along * river_meander) * river_width * 1.5);
+	// NOTE: smoothstep needs edge0 < edge1 — reversed edges are undefined in GLSL.
+	return (1.0 - smoothstep(river_width * 0.45, river_width * 0.9, across))
+	     * smoothstep(river_start * 0.5, river_start, along);
+}
+
 void fragment() {
-	// Discard terrain that is too deep to be visible through the water.
-	// The coast dips to ~-2wu; keeping geometry down to -20.0 lets the
-	// depth-based water shader show the underwater slope in shallow areas.
-	if (v_height < -20.0) {
+	if (v_height < HIDDEN_DEPTH) {
 		discard;
 	}
 
@@ -88,34 +98,32 @@ void fragment() {
 	float t_rock  = smoothstep(rock_low,   rock_high,  v_height);
 	vec4  col     = mix(mix(beach_col, grass_col, t_grass), rock_col, t_rock);
 
-	// Zone-based biome tint: inverse-distance-weighted blend of grass/rock tints.
-	// v_local_xz is in island-local space (zone positions are local offsets too).
+	// Zone-based biome tint: Gaussian-weighted blend of grass/rock tints.
 	vec3  tint_accum = vec3(0.0);
 	float w_sum      = 0.0;
 	for (int i = 0; i < zone_count; i++) {
-		vec2  zpos = zone_data[i].xy;
-		float zrad = zone_data[i].z;
-		float d    = length(v_local_xz - zpos);
-		float w    = max(0.0, 1.0 - d / max(zrad, 0.001));
-		w = w * w;   // squared: sharper zone borders, less muddy middle-ground
-		// Blend grass/rock tint by the same t_rock that drives atlas blending
-		vec3 zt = mix(zone_grass_tint[i].rgb, zone_rock_tint[i].rgb, t_rock);
+		vec2  dd = v_local_xz - zone_data[i].xy;
+		float r  = max(zone_data[i].z, 0.001);
+		float w  = exp(-3.0 * dot(dd, dd) / (r * r));
+		vec3  zt = mix(zone_grass_tint[i].rgb, zone_rock_tint[i].rgb, t_rock);
 		tint_accum += zt * w;
 		w_sum      += w;
 	}
-	if (w_sum > 0.001) {
+	if (w_sum > 1e-20) {
 		col.rgb *= tint_accum / w_sum;
 	}
 
 	if (has_river > 0.5) {
-		float cos_r  = cos(river_angle);
-		float sin_r  = sin(river_angle);
-		float along  =  wxz.x * cos_r + wxz.y * sin_r;
-		float across = abs(-wxz.x * sin_r + wxz.y * cos_r);
-		float rmask  = smoothstep(river_width, river_width * 0.5, across)
-		             * smoothstep(-river_width * 0.5, river_width * 0.5, along);
-		col = mix(col, beach_col * 0.75, rmask);
+		float rm = river_mask(v_local_xz) * (1.0 - t_rock);
+		col = mix(col, beach_col * 0.75, rm);
 	}
 
-	ALBEDO = col.rgb;
+	// Wet sand just above the waterline ties land and sea together; the seabed
+	// darkens with depth so shallows fade smoothly into the deep.
+	float wet = 1.0 - smoothstep(0.0, 0.45, v_height);
+	col.rgb  *= mix(1.0, 0.72, wet);
+	col.rgb  *= mix(1.0, 0.55, smoothstep(0.0, 8.0, -v_height));
+
+	ALBEDO    = col.rgb;
+	ROUGHNESS = mix(0.95, 0.55, wet);
 }

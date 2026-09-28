@@ -16,69 +16,78 @@ var target_size: float = 12.0
 var current_size: float = 12.0
 
 # For pinch-to-zoom on mobile
-var touch_points: Dictionary = {}
+var touch_points: Dictionary = {}   # finger index -> Vector2
 var last_pinch_distance: float = 0.0
 
 var target_node: Node3D = null
 
+
 func _ready() -> void:
 	current_size = size
 	target_size = size
+	# The camera is moved every rendered frame in _process, so it must not be
+	# physics-interpolated itself; it follows the boat's *interpolated* transform.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 
-	# Get the target to follow
-	if follow_target:
-		target_node = get_node(follow_target)
+	if not follow_target.is_empty():
+		target_node = get_node(follow_target) as Node3D
+
 
 func _input(event: InputEvent) -> void:
 	# Mouse wheel zoom (desktop)
 	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+		var mb: InputEventMouseButton = event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			zoom_in()
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			zoom_out()
 
 	# Touch handling for mobile pinch-to-zoom
 	if event is InputEventScreenTouch:
-		if event.pressed:
-			touch_points[event.index] = event.position
+		var touch: InputEventScreenTouch = event as InputEventScreenTouch
+		if touch.pressed:
+			touch_points[touch.index] = touch.position
 		else:
-			touch_points.erase(event.index)
+			touch_points.erase(touch.index)
 			last_pinch_distance = 0.0
 
 	if event is InputEventScreenDrag:
-		touch_points[event.index] = event.position
+		var drag: InputEventScreenDrag = event as InputEventScreenDrag
+		touch_points[drag.index] = drag.position
 
 		# Pinch zoom with 2 fingers
 		if touch_points.size() == 2:
-			var touch_indices = touch_points.keys()
-			var touch1_pos = touch_points[touch_indices[0]]
-			var touch2_pos = touch_points[touch_indices[1]]
-			var current_distance = touch1_pos.distance_to(touch2_pos)
+			var points: Array = touch_points.values()
+			var p1: Vector2 = points[0]
+			var p2: Vector2 = points[1]
+			var current_distance: float = p1.distance_to(p2)
 
-			if last_pinch_distance > 0:
-				var delta = current_distance - last_pinch_distance
+			if last_pinch_distance > 0.0:
+				var pinch_delta: float = current_distance - last_pinch_distance
 				# Pinch in = zoom out, pinch out = zoom in
-				target_size -= delta * 0.01
-				target_size = clamp(target_size, min_zoom, max_zoom)
+				target_size = clampf(target_size - pinch_delta * 0.01, min_zoom, max_zoom)
 
 			last_pinch_distance = current_distance
 		else:
 			last_pinch_distance = 0.0
 
+
 func _process(delta: float) -> void:
 	# Smooth zoom transition
-	current_size = lerp(current_size, target_size, zoom_smoothing * delta)
+	current_size = lerpf(current_size, target_size, zoom_smoothing * delta)
 	size = current_size
 
-	# Follow the target (boat) — lock Y to 0 so boat bobbing doesn't shift the scene
-	if target_node:
-		var target_pos = Vector3(target_node.global_position.x, 0.0, target_node.global_position.z) + camera_offset
-		global_position = global_position.lerp(target_pos, follow_smoothing * delta)
+	# Follow the boat's interpolated position (smooth at any refresh rate, e.g.
+	# 90/120 Hz phones) — lock Y to 0 so bobbing doesn't shift the scene.
+	if target_node != null:
+		var boat_pos: Vector3 = target_node.get_global_transform_interpolated().origin
+		var target_pos: Vector3 = Vector3(boat_pos.x, 0.0, boat_pos.z) + camera_offset
+		global_position = global_position.lerp(target_pos, minf(follow_smoothing * delta, 1.0))
+
 
 func zoom_in() -> void:
-	target_size -= zoom_speed
-	target_size = clamp(target_size, min_zoom, max_zoom)
+	target_size = clampf(target_size - zoom_speed, min_zoom, max_zoom)
+
 
 func zoom_out() -> void:
-	target_size += zoom_speed
-	target_size = clamp(target_size, min_zoom, max_zoom)
+	target_size = clampf(target_size + zoom_speed, min_zoom, max_zoom)

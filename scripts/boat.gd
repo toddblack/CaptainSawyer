@@ -15,7 +15,7 @@ var drag: float = 0.95
 @export var bob_speed: float = 1.5
 @export var tilt_amount: float = 0.05
 
-# Boundary settings (ocean is 200x200, so keep within -95 to 95)
+# Boundary settings (ocean is 1000x1000, keep a small margin inside the edge)
 @export var boundary_min: Vector2 = Vector2(-495, -495)
 @export var boundary_max: Vector2 = Vector2(495, 495)
 
@@ -26,6 +26,9 @@ var bob_time: float = 0.0
 # Touch steering — Option B: finger position projected to world XZ, boat sails toward it
 var _has_touch_target: bool = false
 var _touch_target: Vector3 = Vector3.ZERO
+# Active finger indices — steering only follows a single finger, so a
+# two-finger pinch-zoom never yanks the boat around.
+var _touches: Dictionary = {}
 
 @onready var wake_particles: GPUParticles3D = $WakeParticles
 @onready var _bow_left: GPUParticles3D = $BowWaveLeft
@@ -57,12 +60,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var touch: InputEventScreenTouch = event as InputEventScreenTouch
 		if touch.pressed:
+			_touches[touch.index] = true
+		else:
+			_touches.erase(touch.index)
+		if touch.pressed and _touches.size() == 1:
 			_update_touch_target(touch.position)
 		else:
 			_has_touch_target = false
 	elif event is InputEventScreenDrag:
-		var drag_event: InputEventScreenDrag = event as InputEventScreenDrag
-		_update_touch_target(drag_event.position)
+		if _touches.size() == 1:
+			var drag_event: InputEventScreenDrag = event as InputEventScreenDrag
+			_update_touch_target(drag_event.position)
 
 
 func _update_touch_target(screen_pos: Vector2) -> void:
@@ -140,6 +148,13 @@ func _physics_process(delta: float) -> void:
 	rotation.z = rock_z
 
 	move_and_slide()
+
+	# Grinding against a shore: bleed speed down to what we actually achieved
+	# (sliding along the coast keeps the tangential part) so the wake and bow
+	# spray don't keep running at full speed while we're stuck.
+	if get_slide_collision_count() > 0:
+		var real_speed: float = get_real_velocity().length()
+		current_speed = signf(current_speed) * minf(absf(current_speed), real_speed)
 
 	# ---- Water effects ------------------------------------------- #
 	var spd: float = abs(current_speed)

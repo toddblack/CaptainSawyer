@@ -26,9 +26,9 @@ Answer before touching any file:
 **Existing shaders for reference:**
 | Shader | Purpose | Key technique |
 |---|---|---|
-| `water_shader.gdshader` | Ocean surface | World-space UV via varying, vertex wave displacement |
-| `island_terrain.gdshader` | Island mesh | Height-based blend, ALPHA fade at waterline |
-| Fog of war (inline in fog_of_war.gd) | Screen overlay | canvas_item, screen UV → world XZ projection |
+| `water_shader.gdshader` | Ocean surface | World-space UV via varying, depth-buffer water column → colour, alpha and shore foam |
+| `island_terrain.gdshader` | Island mesh | Height-based atlas blend, Gaussian zone tints, wet sand / seabed darkening |
+| Fog of war (inline in fog_of_war.gd) | Full-screen 3D quad | spatial + depth buffer → true world XZ per pixel |
 
 ---
 
@@ -126,3 +126,8 @@ Add the shader as an `ext_resource` at the top of main.tscn:
 - **Avoid pixel-snapping in UV calculations** — causes visible grid lines. Use smooth world-space UV math; don't `floor()` or `round()` UV before sampling.
 - **Value noise grid seams** — if using noise, rotate each UV sample by a different irrational angle (22°, 55°) to break up grid alignment, especially on isometric 45° screen axes.
 - **`ext_resource` uid=** — not strictly required in .tscn; Godot adds it on next editor save. Safe to omit when writing by hand.
+- **Uniform arrays must be set whole** — `set_shader_parameter("zone_data[0]", ...)` silently does nothing. Build a `PackedVector4Array` (padded to the declared size) and set `"zone_data"`.
+- **`smoothstep(a, b, x)` needs `a < b`** — reversed edges are undefined in GLSL (works on some GPUs, garbage on others). Write `1.0 - smoothstep(lo, hi, x)` instead.
+- **Procedural meshes: wind triangles clockwise seen from the front** (Godot's front face). Wrong winding forces `cull_disabled` as a workaround and flips generated normals. Island terrain uses `i00, i10, i11 / i00, i11, i01` on an X-right, Z-down grid.
+- **Shoreline effects: use the depth buffer, not a baked map.** The water column thickness (`depth_texture` → view depth − `-VERTEX.z`) follows the real coastline per pixel; a low-res baked shore texture drifts into circles and rings.
+- **Full-screen spatial quad** (fog): `QuadMesh` 2×2, `POSITION = vec4(VERTEX.xy, 1.0, 1.0)` in `vertex()`, huge `custom_aabb` so it's never culled, `render_priority` high so it draws after the transparent ocean. The ocean isn't in the depth buffer — project below-sea-level points back up to Y=0 along the view ray.

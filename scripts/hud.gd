@@ -6,8 +6,6 @@ extends Control
 
 const MAP_SIZE:       float = 160.0
 const WORLD_HALF:     float = 500.0
-const CELL_SIZE:      float = 50.0
-const EXPLORE_RADIUS: int   = 2
 
 const TOAST_W: float = 440.0
 const TOAST_H: float = 220.0
@@ -18,8 +16,8 @@ const TOAST_SHADOW_LAYERS: Array[Vector3] = [
 	Vector3(10.0, 13.0, 0.10),
 ]
 
-# Fog cell grid: Vector2i -> true means explored
-var _explored: Dictionary = {}
+# World fog — the minimap draws its texture so both always agree.
+var _fog: FogOfWar = null
 
 # Discovered island world positions
 var _islands: Array[Vector2] = []
@@ -153,7 +151,11 @@ var _rope_tex: Texture2D = null
 
 
 func _ready() -> void:
-	_boat = get_tree().get_first_node_in_group("boat")
+	# Full-screen Control: with the default STOP filter it would swallow every
+	# touch before the boat's _unhandled_input sees it.  Toast taps use _input.
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_boat = get_tree().get_first_node_in_group("boat") as Node3D
+	_fog  = get_tree().get_first_node_in_group("fog_of_war") as FogOfWar
 
 	_wood_tex = load("res://assets/textures/wood_nautical.png") as Texture2D
 	_rope_tex = load("res://assets/textures/rope_segments.png") as Texture2D
@@ -215,22 +217,8 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	if _boat:
-		_mark_explored(_boat.global_position)
 	queue_redraw()
 	_arc_bodies.queue_redraw()
-
-
-# ------------------------------------------------------------------ #
-#  Fog tracking                                                        #
-# ------------------------------------------------------------------ #
-
-func _mark_explored(world_pos: Vector3) -> void:
-	var cx: int = int(floor((world_pos.x + WORLD_HALF) / CELL_SIZE))
-	var cz: int = int(floor((world_pos.z + WORLD_HALF) / CELL_SIZE))
-	for dx: int in range(-EXPLORE_RADIUS, EXPLORE_RADIUS + 1):
-		for dz: int in range(-EXPLORE_RADIUS, EXPLORE_RADIUS + 1):
-			_explored[Vector2i(cx + dx, cz + dz)] = true
 
 
 # ------------------------------------------------------------------ #
@@ -419,20 +407,10 @@ func _draw_minimap() -> void:
 	draw_rect(_map_rect, Color(0.05, 0.10, 0.18, 0.92))
 	draw_rect(_map_rect.grow(-2), Color(0.08, 0.20, 0.40, 0.60))
 
-	var total_cells: int = int(WORLD_HALF * 2.0 / CELL_SIZE)
-	for cx: int in range(total_cells):
-		for cz: int in range(total_cells):
-			if not _explored.has(Vector2i(cx, cz)):
-				var cell_world: Vector2 = Vector2(
-					cx * CELL_SIZE - WORLD_HALF,
-					cz * CELL_SIZE - WORLD_HALF
-				)
-				var cell_px:      Vector2 = _world_to_map(cell_world)
-				var cell_size_px: float   = MAP_SIZE / total_cells
-				draw_rect(
-					Rect2(cell_px, Vector2(cell_size_px, cell_size_px)),
-					Color(0.02, 0.04, 0.08, 0.88)
-				)
+	# The world fog texture (LA8: alpha = fog) doubles as the minimap mask —
+	# one draw call, and the map always matches what's revealed in the world.
+	if _fog != null:
+		draw_texture_rect(_fog.get_fog_texture(), _map_rect, false, Color(0.02, 0.04, 0.08, 0.92))
 
 	for island_pos: Vector2 in _islands:
 		var mp: Vector2 = _world_to_map(island_pos)

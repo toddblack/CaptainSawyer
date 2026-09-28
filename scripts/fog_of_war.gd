@@ -2,18 +2,19 @@ extends Node3D
 class_name FogOfWar
 
 # ------------------------------------------------------------------ #
-#  Fog of War — 2D CanvasLayer overlay                                #
+#  Fog of War — world-space overlay                                    #
 #                                                                      #
-#  A horizontal 3D plane breaks at high orthographic zoom: rays from  #
-#  the bottom of the screen start below the plane and miss it.        #
-#  Instead we render a full-screen ColorRect on a CanvasLayer and     #
-#  project screen UV → world XZ at Y=0 analytically inside the        #
-#  shader. This covers 100 % of the screen at any zoom level.         #
+#  A full-screen quad reads the depth buffer, rebuilds each pixel's   #
+#  true world position, and looks up the fog texture there.  Tall     #
+#  terrain and trees are fogged at their own XZ, so there is no       #
+#  height-parallax to compensate for.  Pixels below sea level (seabed #
+#  seen through the transparent ocean, or empty background) are       #
+#  projected back up to the Y=0 water surface along the view ray.     #
 # ------------------------------------------------------------------ #
 
-const FOG_TEX_SIZE   := 256
-const WORLD_HALF     := 500.0
-const MOVE_THRESHOLD := 0.5
+const FOG_TEX_SIZE:   int   = 256
+const WORLD_HALF:     float = 500.0
+const MOVE_THRESHOLD: float = 0.5
 
 # Base reveal radius for Tier 1 (Dinghy). Each subsequent ship tier adds ~12%.
 # Tier 1: 20  |  Tier 2: 23  |  Tier 3: 26  |  Tier 4: 30
@@ -21,159 +22,148 @@ const REVEAL_RADIUS_BASE: float = 20.0
 
 var _reveal_radius: float = REVEAL_RADIUS_BASE  # updated by set_ship_tier()
 
+# LA8: L drives the 3D overlay, A lets the minimap draw the same texture as a mask.
+var _fog_data:  PackedByteArray
 var _fog_image: Image
 var _fog_tex:   ImageTexture
 var _fog_mat:   ShaderMaterial
-var _camera:    Camera3D
 var _boat:      Node3D
-var _last_boat_xz := Vector2(9999.0, 9999.0)
+var _dirty:     bool    = false
+var _last_boat_xz: Vector2 = Vector2(9999.0, 9999.0)
 
-var _startup_frames: int = 0
+var _startup_frames: int     = 0
 var _startup_pos:    Vector2 = Vector2.ZERO
 
 
-const SHADER_CODE := """
-shader_type canvas_item;
+const SHADER_CODE: String = """
+shader_type spatial;
+render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, shadows_disabled, fog_disabled;
 
 uniform sampler2D fog_tex : filter_linear, repeat_disable;
+uniform sampler2D depth_texture : hint_depth_texture, filter_nearest;
 uniform vec4  cloud_color : source_color = vec4(0.92, 0.93, 0.96, 1.0);
-uniform float world_half  = 100.0;
+uniform float world_half  = 500.0;
+uniform float blur_texels = 3.0;
+uniform float tex_size    = 256.0;
 
-// Orthographic camera parameters — updated every frame from GDScript.
-uniform vec3  cam_pos;
-uniform vec3  cam_right;
-uniform vec3  cam_up;
-uniform vec3  cam_fwd;
-uniform float cam_size;    // full viewport height in world units (Camera3D.size)
-uniform float cam_aspect;  // viewport width / height
+void vertex() {
+	// Full-screen quad: QuadMesh 2×2 maps straight to clip space.
+	POSITION = vec4(VERTEX.xy, 1.0, 1.0);
+}
 
 void fragment() {
-	// Convert screen UV → world-space ray origin (orthographic: all rays parallel).
-	float ndc_x =  UV.x * 2.0 - 1.0;
-	float ndc_y = (1.0 - UV.y) * 2.0 - 1.0;   // flip Y (screen Y-down → world Y-up)
-	vec3 ray_origin = cam_pos
-	                + cam_right * (ndc_x * cam_size * cam_aspect * 0.5)
-	                + cam_up    * (ndc_y * cam_size * 0.5);
+	float depth = texture(depth_texture, SCREEN_UV).r;
+	vec4  view  = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, depth, 1.0);
+	view.xyz   /= view.w;
+	vec3  world = (INV_VIEW_MATRIX * vec4(view.xyz, 1.0)).xyz;
 
-	// Intersect ray with the Y=0 ocean plane.
-	// cam_fwd.y is always negative for our downward-looking camera.
-	float t = -ray_origin.y / cam_fwd.y;
-	vec2 world_xz = (ray_origin + cam_fwd * t).xz;
+	// The ocean is transparent, so it isn't in the depth buffer.  Anything below
+	// sea level is seen through the water — fog it where the ray meets Y=0.
+	vec3 fwd = -INV_VIEW_MATRIX[2].xyz;
+	if (world.y < 0.0 && fwd.y < -0.0001) {
+		world -= fwd * (world.y / fwd.y);
+	}
 
-	// Map world XZ to fog texture UV [0..1].
-	vec2 fog_uv = (world_xz + vec2(world_half)) / (world_half * 2.0);
+	vec2 fog_uv = (world.xz + vec2(world_half)) / (world_half * 2.0);
 
 	// Smooth fade to fully opaque near and beyond world edges.
-	// Transition zone ≈ 8 world units (0.04 × 200) — no hard white bar.
 	float e = 0.04;
 	float edge_fade = smoothstep(0.0, e, fog_uv.x)
-	                * smoothstep(1.0, 1.0 - e, fog_uv.x)
+	                * smoothstep(0.0, e, 1.0 - fog_uv.x)
 	                * smoothstep(0.0, e, fog_uv.y)
-	                * smoothstep(1.0, 1.0 - e, fog_uv.y);
+	                * smoothstep(0.0, e, 1.0 - fog_uv.y);
 
-	vec2 fog_uv_safe = clamp(fog_uv, 0.0, 1.0);
-	// 9-tap Gaussian blur on the fog texture.
-	// s = 3 texels at 256px resolution → ±12 world units, same as before.
-	float s = 3.0 / 256.0;
+	// 9-tap blur softens the texel grid into cloud-like edges.
+	vec2  c = clamp(fog_uv, 0.0, 1.0);
+	float s = blur_texels / tex_size;
 	float fog_sample =
-		texture(fog_tex, clamp(fog_uv_safe,                     0.0, 1.0)).r * 0.36
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2( s,  0.0), 0.0, 1.0)).r * 0.12
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2(-s,  0.0), 0.0, 1.0)).r * 0.12
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2( 0.0,  s), 0.0, 1.0)).r * 0.12
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2( 0.0, -s), 0.0, 1.0)).r * 0.12
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2( s,   s),  0.0, 1.0)).r * 0.04
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2(-s,   s),  0.0, 1.0)).r * 0.04
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2( s,  -s),  0.0, 1.0)).r * 0.04
-		+ texture(fog_tex, clamp(fog_uv_safe + vec2(-s,  -s),  0.0, 1.0)).r * 0.04;
-	// edge_fade=1 inside map, 0 outside → outside blends to opaque cloud.
+		  texture(fog_tex, c).r * 0.36
+		+ texture(fog_tex, clamp(c + vec2( s,  0.0), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(c + vec2(-s,  0.0), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(c + vec2( 0.0,  s), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(c + vec2( 0.0, -s), 0.0, 1.0)).r * 0.12
+		+ texture(fog_tex, clamp(c + vec2( s,   s),  0.0, 1.0)).r * 0.04
+		+ texture(fog_tex, clamp(c + vec2(-s,   s),  0.0, 1.0)).r * 0.04
+		+ texture(fog_tex, clamp(c + vec2( s,  -s),  0.0, 1.0)).r * 0.04
+		+ texture(fog_tex, clamp(c + vec2(-s,  -s),  0.0, 1.0)).r * 0.04;
 	float fog_mask = mix(1.0, fog_sample, edge_fade);
 
 	if (fog_mask < 0.02) discard;
 
-	COLOR = vec4(cloud_color.rgb, fog_mask * 0.85);
+	ALBEDO = cloud_color.rgb;
+	ALPHA  = fog_mask * 0.85;
 }
 """
 
 
 func _ready() -> void:
 	_build_fog_overlay()
-	call_deferred("_find_nodes")
+	call_deferred("_find_boat")
 
 
-func _find_nodes() -> void:
-	_boat   = get_node_or_null("../Boat")
-	_camera = get_node_or_null("../Camera3D")
-
-	if not _boat:
-		_boat = get_tree().get_first_node_in_group("boat")
-	if not _camera:
-		_camera = get_viewport().get_camera_3d()
-
-	if _boat:
-		print("FogOfWar: found boat at ", _boat.global_position)
-		var start := Vector2(_boat.global_position.x, _boat.global_position.z)
-		_last_boat_xz  = start
-		_startup_pos   = start
-		_startup_frames = 3
-		_reveal(start, _reveal_radius)
-	else:
-		print("FogOfWar: boat NOT found")
-
-	if not _camera:
-		print("FogOfWar: camera NOT found")
+func _find_boat() -> void:
+	_boat = get_tree().get_first_node_in_group("boat") as Node3D
+	if _boat == null:
+		push_warning("FogOfWar: boat not found")
+		return
+	var start: Vector2 = Vector2(_boat.global_position.x, _boat.global_position.z)
+	_last_boat_xz   = start
+	_startup_pos    = start
+	_startup_frames = 3
+	_reveal(start, _reveal_radius, false)
 
 
 func _build_fog_overlay() -> void:
-	_fog_image = Image.create(FOG_TEX_SIZE, FOG_TEX_SIZE, false, Image.FORMAT_RGBA8)
-	_fog_image.fill(Color.WHITE)
-	_fog_tex = ImageTexture.create_from_image(_fog_image)
+	_fog_data = PackedByteArray()
+	_fog_data.resize(FOG_TEX_SIZE * FOG_TEX_SIZE * 2)
+	_fog_data.fill(255)
+	_fog_image = Image.create_from_data(FOG_TEX_SIZE, FOG_TEX_SIZE, false, Image.FORMAT_LA8, _fog_data)
+	_fog_tex   = ImageTexture.create_from_image(_fog_image)
 
-	var shader := Shader.new()
+	var shader: Shader = Shader.new()
 	shader.code = SHADER_CODE
 	_fog_mat = ShaderMaterial.new()
 	_fog_mat.shader = shader
+	# Transparent objects sort by priority first — draw after the ocean.
+	_fog_mat.render_priority = 100
 	_fog_mat.set_shader_parameter("world_half",  WORLD_HALF)
+	_fog_mat.set_shader_parameter("tex_size",    float(FOG_TEX_SIZE))
 	_fog_mat.set_shader_parameter("fog_tex",     _fog_tex)
 	_fog_mat.set_shader_parameter("cloud_color", Color(0.92, 0.93, 0.96, 1.0))
 
-	# CanvasLayer 0 → renders above the 3D scene, below the HUD (which is at layer 1).
-	var canvas_layer := CanvasLayer.new()
-	canvas_layer.layer = 0
-
-	var color_rect := ColorRect.new()
-	color_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	color_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	color_rect.material = _fog_mat
-
-	canvas_layer.add_child(color_rect)
-	add_child(canvas_layer)
+	var quad: QuadMesh = QuadMesh.new()
+	quad.size = Vector2(2.0, 2.0)
+	var mi: MeshInstance3D = MeshInstance3D.new()
+	mi.mesh = quad
+	mi.material_override = _fog_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# The vertex shader ignores the node's position; a huge AABB keeps it from
+	# ever being frustum-culled.
+	mi.custom_aabb = AABB(Vector3(-100000.0, -100000.0, -100000.0), Vector3(200000.0, 200000.0, 200000.0))
+	add_child(mi)
 
 
 func _process(_delta: float) -> void:
-	# Push fresh camera parameters to the shader every frame.
-	if _camera:
-		var vp_size := get_viewport().get_visible_rect().size
-		var aspect  := vp_size.x / vp_size.y if vp_size.y > 0.0 else 1.0
-		_fog_mat.set_shader_parameter("cam_pos",    _camera.global_position)
-		_fog_mat.set_shader_parameter("cam_right",  _camera.global_transform.basis.x)
-		_fog_mat.set_shader_parameter("cam_up",     _camera.global_transform.basis.y)
-		_fog_mat.set_shader_parameter("cam_fwd",   -_camera.global_transform.basis.z)
-		_fog_mat.set_shader_parameter("cam_size",   _camera.size)
-		_fog_mat.set_shader_parameter("cam_aspect", aspect)
+	if _boat != null:
+		if _startup_frames > 0:
+			_startup_frames -= 1
+			_reveal(_startup_pos, _reveal_radius, false)
+		else:
+			var boat_xz: Vector2 = Vector2(_boat.global_position.x, _boat.global_position.z)
+			if boat_xz.distance_to(_last_boat_xz) >= MOVE_THRESHOLD:
+				_last_boat_xz = boat_xz
+				_reveal(boat_xz, _reveal_radius, false)
 
-	if not _boat:
-		_find_nodes()
-		return
+	# At most one upload per frame, into the existing GPU texture.
+	if _dirty:
+		_dirty = false
+		_fog_image.set_data(FOG_TEX_SIZE, FOG_TEX_SIZE, false, Image.FORMAT_LA8, _fog_data)
+		_fog_tex.update(_fog_image)
 
-	if _startup_frames > 0:
-		_startup_frames -= 1
-		_reveal(_startup_pos, _reveal_radius)
-		return
 
-	var boat_xz := Vector2(_boat.global_position.x, _boat.global_position.z)
-	if boat_xz.distance_to(_last_boat_xz) >= MOVE_THRESHOLD:
-		_last_boat_xz = boat_xz
-		_reveal(boat_xz, _reveal_radius)
+## Fog texture (LA8, 1 = fogged) covering the whole world — the minimap draws it.
+func get_fog_texture() -> Texture2D:
+	return _fog_tex
 
 
 ## Call when the player's ship tier changes (1–4).
@@ -182,55 +172,49 @@ func set_ship_tier(tier: int) -> void:
 	_reveal_radius = REVEAL_RADIUS_BASE * pow(1.12, float(tier - 1))
 
 
-## Clear a world-space circle at world_xz with the given radius.
-## Called by Island on discovery to expose tall terrain's height-parallax
-## shadow — the Y=0 footprint of a peak at height h is offset by –h world
-## units in the camera direction, so islands need a larger reveal than the
-## boat's normal travelling radius.
+## Fully clear a world-space circle (soft rim) — used when an island is discovered.
 func reveal_area(world_xz: Vector2, world_radius: float) -> void:
-	_reveal(world_xz, world_radius)
+	_reveal(world_xz, world_radius, true)
 
 
-func _reveal(world_xz: Vector2, world_radius: float) -> void:
-	var cx: int = int((world_xz.x + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
-	var cy: int = int((world_xz.y + WORLD_HALF) / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
-	var r_px: int = int(world_radius / (WORLD_HALF * 2.0) * FOG_TEX_SIZE)
-	# Search to 3× r_px to capture the full Gaussian tail (exp(-9) ≈ 0.0001).
-	var r_search: int = r_px * 3
-	var r_search_sq: int = r_search * r_search
-	var size: int = FOG_TEX_SIZE
+# solid = false: multiplicative Gaussian (the boat's trail).  Each pass multiplies
+#   remaining fog by (1 - gaussian(t)); overlapping passes compound, so corridor
+#   walls clear fully with no straight-tangent seams.
+# solid = true: clear everything inside the radius with a short soft rim.
+func _reveal(world_xz: Vector2, world_radius: float, solid: bool) -> void:
+	var size:  int   = FOG_TEX_SIZE
+	var px_per_wu: float = float(size) / (WORLD_HALF * 2.0)
+	var r_px:  float = world_radius * px_per_wu
+	if r_px < 0.5:
+		return
+	var cx:    float = (world_xz.x + WORLD_HALF) * px_per_wu
+	var cy:    float = (world_xz.y + WORLD_HALF) * px_per_wu
+	# Gaussian tail is negligible past t=3 (exp(-13.5)).
+	var reach: float = r_px * (1.1 if solid else 3.0)
 
-	# Multiplicative Gaussian clearance via PackedByteArray (one get_data / set_data pair).
-	# Each call multiplies remaining fog by (1 - gaussian(t)), where t = dist / r_px.
-	# Overlapping circles compound: a point hit by N passes is cleared to (1-g)^N → 0.
-	# Corridor walls (t≈1 from every passing circle) are hit many times and fully clear,
-	# eliminating the straight-tangent seam that plagued the old smoothstep+min approach.
-	var data: PackedByteArray = _fog_image.get_data()
-	var changed := false
+	var x0: int = maxi(int(floor(cx - reach)), 0)
+	var x1: int = mini(int(ceil(cx + reach)), size - 1)
+	var y0: int = maxi(int(floor(cy - reach)), 0)
+	var y1: int = mini(int(ceil(cy + reach)), size - 1)
 
-	for dy: int in range(-r_search, r_search + 1):
-		for dx: int in range(-r_search, r_search + 1):
-			if dx * dx + dy * dy > r_search_sq:
+	for py: int in range(y0, y1 + 1):
+		var dy: float = float(py) + 0.5 - cy
+		for px: int in range(x0, x1 + 1):
+			var dx: float = float(px) + 0.5 - cx
+			var t:  float = sqrt(dx * dx + dy * dy) / r_px
+			var clear: float
+			if solid:
+				clear = 1.0 - smoothstep(0.85, 1.1, t)
+			else:
+				if t > 3.0:
+					continue
+				clear = exp(-t * t * 1.5)
+			if clear <= 0.0:
 				continue
-			var px: int = cx + dx
-			var py: int = cy + dy
-			if px < 0 or px >= size or py < 0 or py >= size:
-				continue
-			var dist: float = sqrt(float(dx * dx + dy * dy))
-			var t: float = dist / float(r_px)
-			# exp(-1.5·t²): 1.0 at center (full clear), ~0.22 at t=1, ~0.002 at t=2
-			# Sigma=1.5 keeps the halo tighter — accumulated passes clear less far out.
-			var contribution: float = exp(-t * t * 1.5)
-			var idx: int = (py * size + px) * 4
-			var current_byte: int = int(data[idx])
-			var target_byte: int = int(float(current_byte) * (1.0 - contribution))
-			if target_byte < current_byte:
-				data[idx + 0] = target_byte
-				data[idx + 1] = target_byte
-				data[idx + 2] = target_byte
-				changed = true
-
-	if changed:
-		_fog_image.set_data(size, size, false, Image.FORMAT_RGBA8, data)
-		_fog_tex = ImageTexture.create_from_image(_fog_image)
-		_fog_mat.set_shader_parameter("fog_tex", _fog_tex)
+			var idx: int = (py * size + px) * 2
+			var cur: int = _fog_data[idx]
+			var nxt: int = int(float(cur) * (1.0 - clear))
+			if nxt < cur:
+				_fog_data[idx]     = nxt
+				_fog_data[idx + 1] = nxt
+				_dirty = true

@@ -11,10 +11,17 @@ enum ZoneType    { TROPICAL = 0, VOLCANIC = 1, ATOLL = 2, HIGHLAND = 3, PLAINS =
 @export var num_trees:        int        = 3
 @export var discovery_radius: float      = 18.0
 @export var island_type:      IslandType = IslandType.TROPICAL
+## World seed from IslandSpawner. Mixed with island_name so the same name gives
+## a different island in every world, but the same island when a world reloads.
+@export var world_seed:       int        = 0
+## Build terrain on a worker thread. The home island builds synchronously so it
+## is on screen from the first frame.
+@export var build_async:      bool       = true
 
 var discovered:   bool       = false
 var resources:    Dictionary = {}
 var _boat:        Node3D     = null
+var _seed:        int        = 0
 var _has_river:   bool       = false
 var _river_angle: float      = 0.0
 
@@ -84,9 +91,26 @@ const _TEX_ATLAS      = preload("res://assets/textures/dirt_sand_water_stone.png
 
 var _terrain_mat: ShaderMaterial
 
-# ── Tree pools keyed by ZoneType int value ─────────────────────────────────── #
+# ── Terrain shape ──────────────────────────────────────────────────────────── #
+# The island is a signed "land field" s(x, z): s > 0 is land, s < 0 is sea, and
+# s = 0 is the coastline.  Heights on both sides are built from the true
+# distance to that coastline (see _coast_distance), so they meet exactly at
+# Y = 0 and every shore has the same beach and seabed slope.
+const _SEABED_SLOPE:    float = 0.40    # depth gained per world unit offshore
+const _SEABED_FLOOR:    float = -14.0   # water is fully opaque well before this
+const _LAGOON_FLOOR:    float = -2.2    # atoll lagoons stay shallow and turquoise
+const _BEACH_SLOPE:     float = 0.22    # height gained per world unit inland
+const _BEACH_CAP:       float = 1.2     # beach ramp tops out here; hills take over
+const _MESH_EXTENT:     float = 1.50    # mesh half-size as a multiple of base_radius
+const _TARGET_CELL:     float = 1.6     # desired grid spacing (world units)
+const _MAX_GRID:        int   = 320
+const _CHUNK_CELLS:     int   = 32      # terrain split into chunks for frustum culling
+const _MESH_SKIP_DEPTH: float = -11.0   # cells entirely below this are never visible
+
+# ── Trees ──────────────────────────────────────────────────────────────────── #
 const _TREE_SCALE_MIN: float = 0.10
 const _TREE_SCALE_MAX: float = 0.19
+const _TREE_MIN_HEIGHT: float = 0.8     # keep trees off the wet sand
 
 const _ZONE_TREE_POOLS: Dictionary = {
 	0: [  # TROPICAL
@@ -120,16 +144,36 @@ const _ZONE_TREE_POOLS: Dictionary = {
 	],
 }
 
+# Mesh parts per tree GLB, shared by every island: path -> Array of [Mesh, Transform3D, Material].
+static var _tree_part_cache: Dictionary = {}
+
 # ── Noise ──────────────────────────────────────────────────────────────────── #
-var _height_noise: FastNoiseLite
-var _edge_noise:   FastNoiseLite
-var _forest_noise: FastNoiseLite
+var _warp_noise:   FastNoiseLite   # bends the whole island so nothing is circular
+var _coast_noise:  FastNoiseLite   # fractal coastline detail, in world units
+var _ridge_noise:  FastNoiseLite   # ridged texture on mountains
+var _hill_noise:   FastNoiseLite   # gentle rolling ground
+var _forest_noise: FastNoiseLite   # tree clumping
+var _warp_amp:     float = 0.0
 
 # ── Peaks — each Vector3 is (local_x, local_z, strength 0–1) ──────────────── #
-var _peaks: Array[Vector3] = []
+var _peaks:      Array[Vector3] = []
+var _peak_reach: float = 1.0
 
-# Grid resolution — clamped to 64–128 cells
-var _grid_n: int
+# ── Atoll passes — guaranteed boat channels through the reef ring ────────── #
+var _pass_angles:     PackedFloat32Array = PackedFloat32Array()
+var _pass_half_angle: float = 0.0   # angular half-width of each channel (radians)
+
+# ── Grid ───────────────────────────────────────────────────────────────────── #
+var _grid_n: int     = 64
+var _extent: float   = 0.0
+var _cell:   float   = 1.0
+
+# Filled by the build task (worker thread), consumed on the main thread.
+var _build_task:     int                 = -1
+var _heights:        PackedFloat32Array
+var _collision_data: PackedFloat32Array
+var _chunk_arrays:   Array[Array]        = []
+var _tree_xforms:    Dictionary          = {}   # GLB path -> Array of Transform3D
 
 # ── Biome zones ────────────────────────────────────────────────────────────── #
 class BiomeZone:
@@ -144,40 +188,76 @@ class BiomeZone:
 		zone_type  = zt
 		max_height = mh
 
-var _zones: Array = []   # Array[BiomeZone]
+var _zones: Array[BiomeZone] = []
 
 
 # ── Lifecycle ──────────────────────────────────────────────────────────────── #
 
 func _ready() -> void:
-	_grid_n = clampi(int(base_radius * 1.5), 64, 128)
+	_seed   = ("%d:%s" % [world_seed, island_name]).hash()
+	_extent = base_radius * _MESH_EXTENT
+	_grid_n = clampi(int(ceil(_extent * 2.0 / _TARGET_CELL)), 64, _MAX_GRID)
+	_cell   = _extent * 2.0 / float(_grid_n)
+
 	_setup_noise()
 	_setup_zones()
 	_setup_type()
 	_assign_resources()
 	_setup_peaks()
 	_build_materials()
-	_build_geometry()
-	_boat = get_tree().get_first_node_in_group("boat")
+	_boat = get_tree().get_first_node_in_group("boat") as Node3D
+
+	if build_async:
+		_build_task = WorkerThreadPool.add_task(_generate_terrain_data, false, "Island " + island_name)
+	else:
+		_generate_terrain_data()
+		_finish_build()
+		set_process(false)
+
+
+func _process(_delta: float) -> void:
+	if _build_task >= 0 and WorkerThreadPool.is_task_completed(_build_task):
+		WorkerThreadPool.wait_for_task_completion(_build_task)
+		_build_task = -1
+		_finish_build()
+	if _build_task < 0:
+		set_process(false)
+
+
+func _exit_tree() -> void:
+	if _build_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_build_task)
+		_build_task = -1
 
 
 # ── Noise ──────────────────────────────────────────────────────────────────── #
 
 func _setup_noise() -> void:
-	_height_noise = FastNoiseLite.new()
-	_height_noise.seed       = island_name.hash()
-	_height_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	_height_noise.frequency  = 1.0
+	var r: float = maxf(base_radius, 1.0)
 
-	_edge_noise = FastNoiseLite.new()
-	_edge_noise.seed       = island_name.hash() + 9999
-	_edge_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	_edge_noise.frequency  = 1.0
+	_warp_noise = _make_noise(_seed + 9999, 1.0 / (r * 0.8), FastNoiseLite.FRACTAL_FBM, 3)
+	_warp_amp   = r * 0.18
 
-	_forest_noise = FastNoiseLite.new()
-	_forest_noise.seed       = island_name.hash() + 54321
-	_forest_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	_forest_noise.frequency  = 1.0
+	# Enough octaves that the finest coastline wiggle is ~5 world units, whatever
+	# the island's size — big islands get more detail, not bigger blobs.
+	var octaves: int = clampi(1 + int(ceil(log(r * 0.6 / 5.0) / log(2.0))), 3, 7)
+	_coast_noise = _make_noise(_seed + 4242, 1.0 / (r * 0.6), FastNoiseLite.FRACTAL_FBM, octaves)
+	_coast_noise.fractal_gain = 0.55
+
+	_ridge_noise  = _make_noise(_seed + 777,   1.0 / (r * 0.25), FastNoiseLite.FRACTAL_RIDGED, 3)
+	_hill_noise   = _make_noise(_seed + 1313,  1.0 / (r * 0.35), FastNoiseLite.FRACTAL_FBM, 3)
+	_forest_noise = _make_noise(_seed + 54321, 0.06,             FastNoiseLite.FRACTAL_FBM, 2)
+
+
+func _make_noise(noise_seed: int, freq: float, fractal: FastNoiseLite.FractalType,
+		octaves: int) -> FastNoiseLite:
+	var n: FastNoiseLite = FastNoiseLite.new()
+	n.seed            = noise_seed
+	n.noise_type      = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	n.frequency       = freq
+	n.fractal_type    = fractal
+	n.fractal_octaves = octaves
+	return n
 
 
 # ── Biome zone setup ───────────────────────────────────────────────────────── #
@@ -186,10 +266,10 @@ func _setup_noise() -> void:
 # ATOLLs get a single covering ATOLL zone; all others get 1–4 typed zones
 # whose positions drive the height, tinting, resources, and tree variety.
 func _setup_zones() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = island_name.hash() + 88888
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = _seed + 88888
 
-	# ATOLLs stay as a single covering zone — ring height profile handles shape.
+	# ATOLLs stay as a single covering zone — ring land field handles shape.
 	if island_type == IslandType.ATOLL:
 		var mh: float = minf(base_radius * 0.55, 10.0)
 		_zones.append(BiomeZone.new(Vector2.ZERO, base_radius, ZoneType.ATOLL, mh))
@@ -237,7 +317,6 @@ func _setup_zones() -> void:
 		# at the island's heart while still creating distinct edge biomes.
 		var dist: float   = base_radius * rng.randf_range(0.20, 0.55)
 		var zpos: Vector2 = Vector2(cos(angle) * dist, sin(angle) * dist)
-		# Radius large enough that zones cover the full island together.
 		var zrad: float   = base_radius * rng.randf_range(0.55, 0.90)
 		var zt:   int     = pool[rng.randi() % pool.size()]
 		var mh:   float   = minf(base_radius * 0.55, _ZONE_MAX_HEIGHT.get(zt, 45.0))
@@ -257,12 +336,11 @@ func _weighted_zone_count(rng: RandomNumberGenerator,
 # ── Island type (river chance) ─────────────────────────────────────────────── #
 
 func _setup_type() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = island_name.hash() + 77777
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = _seed + 77777
 	# Rivers occur on lush/highland zones; volcanic and desert terrain is too rough.
 	var has_lush_zone: bool = false
-	for z: Object in _zones:
-		var zone: BiomeZone = z as BiomeZone
+	for zone: BiomeZone in _zones:
 		if zone.zone_type == ZoneType.TROPICAL or zone.zone_type == ZoneType.HIGHLAND \
 				or zone.zone_type == ZoneType.PLAINS:
 			has_lush_zone = true
@@ -282,11 +360,10 @@ func _setup_type() -> void:
 # can have both jungle spices AND highland flax.
 
 func _assign_resources() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = island_name.hash() + 11111
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = _seed + 11111
 
-	for z: Object in _zones:
-		var zone: BiomeZone = z as BiomeZone
+	for zone: BiomeZone in _zones:
 		var pool: Array = _ZONE_RESOURCE_TABLE.get(zone.zone_type, ["food"])
 		# Larger zones contribute proportionally more resources.
 		var zone_scale: float = clampf(zone.radius / maxf(base_radius, 1.0), 0.4, 1.2)
@@ -300,17 +377,17 @@ func _assign_resources() -> void:
 # ── Peaks ─────────────────────────────────────────────────────────────────────#
 # One peak is placed near each zone that isn't a flat biome (PLAINS).
 # VOLCANIC and HIGHLAND zones get strong peaks; TROPICAL moderate; DESERT gentle.
-# ATOLL skips this entirely — ring profile in _height_at_xy handles its shape.
+# ATOLL skips this entirely — its ring land field handles the shape.
 
 func _setup_peaks() -> void:
 	if island_type == IslandType.ATOLL:
+		_setup_passes()
 		return
 
-	var rng := RandomNumberGenerator.new()
-	rng.seed = island_name.hash() + 22222
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = _seed + 22222
 
-	for z: Object in _zones:
-		var zone: BiomeZone = z as BiomeZone
+	for zone: BiomeZone in _zones:
 		if zone.zone_type == ZoneType.PLAINS:
 			continue   # Plains zones stay flat — no peak
 
@@ -334,33 +411,77 @@ func _setup_peaks() -> void:
 	if _peaks.is_empty():
 		_peaks.append(Vector3(0.0, 0.0, 0.30))
 
+	# Peak reach shrinks with more peaks so valleys form between them.
+	match _peaks.size():
+		1: _peak_reach = base_radius * 0.90
+		2: _peak_reach = base_radius * 0.78
+		3: _peak_reach = base_radius * 0.73
+		_: _peak_reach = base_radius * 0.68
+
+
+# Every atoll gets 1–3 channels through the reef so the lagoon is always
+# reachable by boat.  Spread apart so two passes never merge into one gap.
+func _setup_passes() -> void:
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = _seed + 33333
+
+	var count: int = 1
+	var roll: float = rng.randf()
+	if roll < 0.15:
+		count = 3
+	elif roll < 0.55:
+		count = 2
+
+	var start: float = rng.randf() * TAU
+	for i: int in range(count):
+		var spread: float = TAU / float(count)
+		_pass_angles.append(start + float(i) * spread + rng.randf_range(-0.25, 0.25) * spread)
+
+	# Channel half-width 7–11 world units, measured along the ring (radius 0.72 r).
+	var half_width: float = rng.randf_range(7.0, 11.0)
+	_pass_half_angle = half_width / maxf(base_radius * 0.72, 1.0)
+
+
+## 0–1 mask: 1 in the middle of an atoll pass, 0 away from every pass.
+## Uses the warped position so channels bend with the ring.
+func _pass_mask(qx: float, qz: float) -> float:
+	var ang: float = atan2(qz, qx)
+	var best: float = 0.0
+	for pass_angle: float in _pass_angles:
+		var diff: float = absf(wrapf(ang - pass_angle, -PI, PI))
+		best = maxf(best, 1.0 - smoothstep(_pass_half_angle * 0.6, _pass_half_angle, diff))
+	return best
+
 
 # ── Height helpers ─────────────────────────────────────────────────────────── #
 
-## Global max height — used for AABB and fog reveal sizing.
+## Global max height — used for rock blending thresholds.
 func _get_max_height() -> float:
-	if not _zones.is_empty():
-		var mh: float = 0.0
-		for z: Object in _zones:
-			mh = maxf(mh, (z as BiomeZone).max_height)
-		return mh
-	# ATOLL fallback (should not reach here — ATOLL always has a zone)
-	return minf(base_radius * 0.55, 10.0)
+	var mh: float = 0.0
+	for zone: BiomeZone in _zones:
+		mh = maxf(mh, zone.max_height)
+	return mh
+
+
+## Gaussian zone influence.  Never reaches zero, so every point on the island
+## has a well-defined blend (no gaps where heights or tints snap).  Must match
+## the weighting in island_terrain.gdshader.
+func _zone_weight(zone: BiomeZone, x: float, z: float) -> float:
+	var dx: float = x - zone.pos.x
+	var dz: float = z - zone.pos.y
+	var t2: float = (dx * dx + dz * dz) / maxf(zone.radius * zone.radius, 0.001)
+	return exp(-3.0 * t2)
 
 
 ## Zone-weighted height cap at a given local XZ position.
-## Smoothly blends zone max_height values so zones transition gradually.
 func _zone_weighted_max_height(x: float, z: float) -> float:
-	var total_w: float = 0.0
+	var total_w:  float = 0.0
 	var weighted: float = 0.0
-	for obj: Object in _zones:
-		var zone: BiomeZone = obj as BiomeZone
-		var d: float  = Vector2(x, z).distance_to(zone.pos)
-		var w: float  = maxf(0.0, 1.0 - d / maxf(zone.radius, 0.001))
-		w = w * w   # squared weight: sharper transitions between zones
+	for zone: BiomeZone in _zones:
+		var w: float = _zone_weight(zone, x, z)
 		weighted += zone.max_height * w
 		total_w  += w
-	if total_w < 0.001:
+	if total_w < 1e-12:
 		return _get_max_height()
 	return weighted / total_w
 
@@ -370,103 +491,191 @@ func _zone_weighted_max_height(x: float, z: float) -> float:
 func _dominant_zone_at(x: float, z: float) -> int:
 	var best_w:  float = -1.0
 	var best_zt: int   = ZoneType.TROPICAL
-	for obj: Object in _zones:
-		var zone: BiomeZone = obj as BiomeZone
-		var d: float = Vector2(x, z).distance_to(zone.pos)
-		var w: float = maxf(0.0, 1.0 - d / maxf(zone.radius, 0.001))
+	for zone: BiomeZone in _zones:
+		var w: float = _zone_weight(zone, x, z)
 		if w > best_w:
 			best_w  = w
 			best_zt = zone.zone_type
 	return best_zt
 
 
-# ── Height function — grid-based, domain-warped ───────────────────────────── #
+# ── Height function ────────────────────────────────────────────────────────── #
+# Two stages, both on the build thread:
+#   1. _sample_point() evaluates the noise at every grid vertex: the land field s
+#      (where the coast is), relief (how high mountains/hills want to be there),
+#      and the atoll radius / river mask.
+#   2. _coast_distance() measures true world-unit distance to the s = 0 coastline
+#      across the grid, and _compose_height() builds beach and seabed slopes from
+#      that distance.  Using real distance (not s itself) means every shore gets
+#      the same beach width and foam lip — no broad sea-level flats where the
+#      noise happens to flatten s out.
 
-# Public accessor used by IslandSpawner to paint the shore proximity map.
+## Height at an island-local position, bilinear from the built grid.
+## Returns the seabed floor before the terrain has finished building.
 func get_height_at(local_x: float, local_z: float) -> float:
-	return _height_at_xy(local_x, local_z)
+	return _grid_height(_heights, local_x, local_z)
 
 
-func _height_at_xy(x: float, z: float) -> float:
-	# ── ATOLL: ring profile (unchanged) ────────────────────────────────────
+func _grid_height(heights: PackedFloat32Array, x: float, z: float) -> float:
+	var nv: int = _grid_n + 1
+	if heights.size() != nv * nv:
+		return _SEABED_FLOOR
+	var fx: float = clampf((x + _extent) / _cell, 0.0, float(_grid_n) - 0.001)
+	var fz: float = clampf((z + _extent) / _cell, 0.0, float(_grid_n) - 0.001)
+	var ix: int = int(fx)
+	var iz: int = int(fz)
+	var tx: float = fx - float(ix)
+	var tz: float = fz - float(iz)
+	var i: int = iz * nv + ix
+	var top:    float = lerpf(heights[i],      heights[i + 1],      tx)
+	var bottom: float = lerpf(heights[i + nv], heights[i + nv + 1], tx)
+	return lerpf(top, bottom, tz)
+
+
+## Noise inputs at one point: x = land field s (> 0 land), y = relief height
+## (mountains + hills, world units), z = warped normalised radius, w = river mask.
+func _sample_point(x: float, z: float) -> Vector4:
+	var r: float = base_radius
+	if sqrt(x * x + z * z) / r > 1.8:
+		return Vector4(-10.0, 0.0, 2.0, 0.0)   # beyond any possible coast
+
+	# Domain warp: bend the sample position so coast, peaks and bays all distort
+	# together and nothing follows a circle.
+	var qx: float = x + _warp_noise.get_noise_2d(x, z) * _warp_amp
+	var qz: float = z + _warp_noise.get_noise_2d(x + 173.1, z - 91.7) * _warp_amp
+	var d:  float = sqrt(qx * qx + qz * qz) / r
+	var n:  float = _coast_noise.get_noise_2d(qx, qz)
+
+	var s: float
 	if island_type == IslandType.ATOLL:
-		var max_h_a: float  = _get_max_height()
-		var raw_r_a: float  = Vector2(x, z).length()
-		var coast_n_a: float = 0.0
-		if raw_r_a > 0.001:
-			coast_n_a = _edge_noise.get_noise_2d(x / raw_r_a * 0.75, z / raw_r_a * 0.75)
-		var eff_r_a: float  = base_radius * (1.0 + coast_n_a * 0.25)
-		var r_norm_a: float = raw_r_a / eff_r_a
-		if r_norm_a >= 1.0:
-			return 0.0
-		var hn_a: float    = _height_noise.get_noise_2d(x * 0.30, z * 0.30)
-		var prof_a: float  = smoothstep(0.25, 0.50, r_norm_a) * (1.0 - smoothstep(0.65, 0.90, r_norm_a))
-		prof_a = clamp(prof_a + hn_a * 0.12, 0.0, 1.0)
-		var res_a: float = prof_a * max_h_a
-		# Outer ring edge dips below Y=0 so the water always covers the terrain edge.
-		# Lagoon centre also dips so the interior stays navigable open ocean.
-		var outer_dip: float = smoothstep(0.65, 1.05, r_norm_a) * 2.0
-		var inner_dip: float = (1.0 - smoothstep(0.0, 0.25, r_norm_a)) * 2.0
-		res_a -= outer_dip + inner_dip
-		return res_a
+		s = 0.07 - absf(d - 0.72) + n * 0.12      # reef ring; low noise opens extra gaps
+		# Guaranteed passes: the ring peaks at s ≈ 0.19, so -0.35 always opens a
+		# channel whose centre sits well below the boat's keel.
+		s -= _pass_mask(qx, qz) * 0.35
+	else:
+		s = (0.95 - d) + n * 0.55
+	s -= smoothstep(1.15, 1.40, d) * 1.5          # land can never reach the mesh edge
 
-	# ── Multi-peak height (all other types) ────────────────────────────────
-	var n: int = _peaks.size()
-	if n == 0:
-		return 0.0
+	var relief: float = 0.0
+	if s > -0.02:
+		relief = _relief(x, z, qx, qz)
+	var v: float = _river_valley(x, z) if _has_river else 0.0
+	return Vector4(s, relief, d, v)
 
-	# Peak reach radius shrinks with more peaks so gaps form between them.
-	var peak_r: float
-	match n:
-		1: peak_r = base_radius * 0.90
-		2: peak_r = base_radius * 0.78
-		3: peak_r = base_radius * 0.73
-		_: peak_r = base_radius * 0.68
 
-	var total: float = 0.0
-	for peak: Vector3 in _peaks:
-		var dx: float    = x - peak.x
-		var dz: float    = z - peak.y
-		var raw_r: float = Vector2(dx, dz).length()
-
-		var coast_n: float = 0.0
-		if raw_r > 0.001:
-			var dir_x: float = dx / raw_r
-			var dir_z: float = dz / raw_r
-			coast_n  = _edge_noise.get_noise_2d(
-				dir_x * 1.2 + peak.x * 0.04,
-				dir_z * 1.2 + peak.y * 0.04) * 0.52
-			coast_n += _height_noise.get_noise_2d(
-				dir_x * 5.0, dir_z * 5.0) * 0.15
-
-		var eff_r: float  = maxf(peak_r * (1.0 + coast_n), peak_r * 0.30)
-		var r_norm: float = raw_r / eff_r
-		if r_norm >= 1.0:
-			continue
-
-		var profile: float = 1.0 - smoothstep(0.05, 0.90, r_norm)
-		total += profile * peak.z   # peak.z = strength
-
-	total = clampf(total, 0.0, 1.0)
-
-	var outer_r: float    = Vector2(x, z).length()
-	var r_norm_outer: float = outer_r / base_radius
-	var outer_mask: float = 1.0 - smoothstep(0.95, 1.25, r_norm_outer)
-	total *= outer_mask
-
-	# Coast dip: applied even when total≈0 so the shoreline goes below Y=0.
-	# The opaque water surface then always covers the terrain edge.
-	var coast_dip: float = smoothstep(0.70, 1.25, r_norm_outer) * 2.0
-
-	# Skip the expensive zone lookup only when far from the coast and no peaks reach here.
-	if total <= 0.01 and r_norm_outer < 0.70:
-		return 0.0
-
-	# Zone-weighted height cap: PLAINS zones stay flat, VOLCANIC soar.
+## Height the ground wants to reach inland of the beach (world units).
+func _relief(x: float, z: float, qx: float, qz: float) -> float:
 	var max_h: float = _zone_weighted_max_height(x, z)
-	var result: float = total * max_h
-	result -= coast_dip
-	return result
+	var hills: float = _hill_noise.get_noise_2d(qx, qz) * 0.5 + 0.5
+
+	if island_type == IslandType.ATOLL:
+		return hills * max_h * 0.35
+
+	var mount: float = 0.0
+	for peak: Vector3 in _peaks:
+		var dx: float = qx - peak.x
+		var dz: float = qz - peak.y
+		var rn: float = sqrt(dx * dx + dz * dz) / _peak_reach
+		if rn < 1.0:
+			var p: float = 1.0 - rn
+			# Half rounded dome, half sharp cone.
+			mount += lerpf(p * p, p * p * (3.0 - 2.0 * p), 0.5) * peak.z
+	mount = clampf(mount, 0.0, 1.0)
+	var ridge: float = _ridge_noise.get_noise_2d(qx, qz) * 0.5 + 0.5
+	mount *= 0.65 + 0.35 * ridge
+
+	return (mount + hills * 0.10) * max_h
+
+
+## Final height from a sample and its distance (world units) to the coastline.
+func _compose_height(sp: Vector4, dist: float) -> float:
+	var h: float
+	if sp.x > 0.0:
+		var ramp: float = maxf(8.0, base_radius * 0.15)
+		h = minf(dist * _BEACH_SLOPE, _BEACH_CAP) + smoothstep(0.0, ramp, dist) * sp.y
+	else:
+		h = maxf(-dist * _SEABED_SLOPE, _SEABED_FLOOR)
+		if island_type == IslandType.ATOLL:
+			var lagoon: float = maxf(-dist * 0.3, _LAGOON_FLOOR)
+			h = lerpf(h, lagoon, 1.0 - smoothstep(0.62, 0.74, sp.z))
+
+	if sp.w > 0.0:
+		# Carve a valley.  Lower reaches drop below sea level and fill with real
+		# ocean water; upper reaches are a dry valley with a painted river bed.
+		h -= sp.w * (0.85 * maxf(h, 0.0) + 0.6)
+	return h
+
+
+## Unsigned distance (world units) from every grid vertex to the s = 0 coastline.
+## Seeds vertices beside a sign change with the exact sub-cell crossing, then
+## spreads outward with a two-pass 8-neighbour chamfer (within a few % of true
+## Euclidean distance — plenty for slopes).
+func _coast_distance(samples: PackedVector4Array, nv: int) -> PackedFloat32Array:
+	var dist: PackedFloat32Array = PackedFloat32Array()
+	dist.resize(nv * nv)
+	dist.fill(1.0e9)
+
+	for iz: int in range(nv):
+		for ix: int in range(nv):
+			var i: int = iz * nv + ix
+			var a: float = samples[i].x
+			if ix + 1 < nv:
+				var b: float = samples[i + 1].x
+				if (a > 0.0) != (b > 0.0):
+					var t: float = a / (a - b)
+					dist[i]     = minf(dist[i],     t * _cell)
+					dist[i + 1] = minf(dist[i + 1], (1.0 - t) * _cell)
+			if iz + 1 < nv:
+				var b2: float = samples[i + nv].x
+				if (a > 0.0) != (b2 > 0.0):
+					var t2: float = a / (a - b2)
+					dist[i]      = minf(dist[i],      t2 * _cell)
+					dist[i + nv] = minf(dist[i + nv], (1.0 - t2) * _cell)
+
+	var c:    float = _cell
+	var diag: float = _cell * 1.41421356
+	# Forward pass: neighbours above and to the left.
+	for iz: int in range(nv):
+		for ix: int in range(nv):
+			var i: int = iz * nv + ix
+			var best: float = dist[i]
+			if ix > 0:
+				best = minf(best, dist[i - 1] + c)
+			if iz > 0:
+				best = minf(best, dist[i - nv] + c)
+				if ix > 0:
+					best = minf(best, dist[i - nv - 1] + diag)
+				if ix + 1 < nv:
+					best = minf(best, dist[i - nv + 1] + diag)
+			dist[i] = best
+	# Backward pass: neighbours below and to the right.
+	for iz: int in range(nv - 1, -1, -1):
+		for ix: int in range(nv - 1, -1, -1):
+			var i: int = iz * nv + ix
+			var best: float = dist[i]
+			if ix + 1 < nv:
+				best = minf(best, dist[i + 1] + c)
+			if iz + 1 < nv:
+				best = minf(best, dist[i + nv] + c)
+				if ix + 1 < nv:
+					best = minf(best, dist[i + nv + 1] + diag)
+				if ix > 0:
+					best = minf(best, dist[i + nv - 1] + diag)
+			dist[i] = best
+	return dist
+
+
+## 0–1 river valley mask in island-local space.  Must match river_mask() in
+## island_terrain.gdshader (same angle, width, meander and start).
+func _river_valley(x: float, z: float) -> float:
+	var c:      float = cos(_river_angle)
+	var sn:     float = sin(_river_angle)
+	var along:  float = x * c + z * sn
+	var perp:   float = -x * sn + z * c
+	var w:      float = base_radius * 0.07
+	var across: float = absf(perp - sin(along / (base_radius * 0.15)) * w * 1.5)
+	var start:  float = base_radius * 0.25
+	return (1.0 - smoothstep(w * 0.5, w * 3.0, across)) * smoothstep(start * 0.5, start, along)
 
 
 # ── Materials ─────────────────────────────────────────────────────────────────#
@@ -484,8 +693,8 @@ func _build_materials() -> void:
 
 	# Rock tile: lava if any zone is VOLCANIC, mossy stone otherwise.
 	var has_volcanic: bool = false
-	for obj: Object in _zones:
-		if (obj as BiomeZone).zone_type == ZoneType.VOLCANIC:
+	for zone: BiomeZone in _zones:
+		if zone.zone_type == ZoneType.VOLCANIC:
 			has_volcanic = true
 			break
 	var rock_offset: Vector2 = Vector2(0.50, 0.50) if has_volcanic else Vector2(0.50, 0.00)
@@ -493,199 +702,285 @@ func _build_materials() -> void:
 	_terrain_mat.set_shader_parameter("rock_tile_scale",  Vector2(0.25, 0.25))
 
 	var max_h: float = _get_max_height()
-	_terrain_mat.set_shader_parameter("blend_low",  max(0.55, max_h * 0.05))
-	_terrain_mat.set_shader_parameter("blend_high", max(1.20, max_h * 0.15))
-
 	if island_type == IslandType.ATOLL:
+		# Atolls are mostly sand with a little scrub on the high spots.
+		_terrain_mat.set_shader_parameter("blend_low",  1.6)
+		_terrain_mat.set_shader_parameter("blend_high", 3.0)
 		_terrain_mat.set_shader_parameter("rock_low",  999.0)
 		_terrain_mat.set_shader_parameter("rock_high", 1000.0)
 	else:
+		# The beach ramp tops out at _BEACH_CAP, so sand gives way to grass there.
+		_terrain_mat.set_shader_parameter("blend_low",  0.8)
+		_terrain_mat.set_shader_parameter("blend_high", 1.8)
 		_terrain_mat.set_shader_parameter("rock_low",  max_h * 0.55)
 		_terrain_mat.set_shader_parameter("rock_high", max_h * 0.82)
 
-	_terrain_mat.set_shader_parameter("has_river",   1.0 if _has_river else 0.0)
-	_terrain_mat.set_shader_parameter("river_angle", _river_angle)
-	_terrain_mat.set_shader_parameter("river_width", base_radius * 0.07)
+	_terrain_mat.set_shader_parameter("has_river",     1.0 if _has_river else 0.0)
+	_terrain_mat.set_shader_parameter("river_angle",   _river_angle)
+	_terrain_mat.set_shader_parameter("river_width",   base_radius * 0.07)
+	_terrain_mat.set_shader_parameter("river_meander", 1.0 / (base_radius * 0.15))
+	_terrain_mat.set_shader_parameter("river_start",   base_radius * 0.25)
 
-	# Upload zone array uniforms to drive spatial tinting in the shader.
-	# zone_data[i]       — vec4: xy = local XZ centre, z = influence radius, w = unused
-	# zone_grass_tint[i] — vec4: RGBA colour multiplied onto the grass/vegetation layer
-	# zone_rock_tint[i]  — vec4: RGBA colour multiplied onto the rock layer
+	# Zone arrays drive spatial tinting in the shader.  Uniform arrays must be
+	# set whole — "name[i]" parameter paths are not supported.
+	# zone_data[i]       — xy = local XZ centre, z = influence radius, w = unused
+	# zone_grass_tint[i] — colour multiplied onto the grass/vegetation layer
+	# zone_rock_tint[i]  — colour multiplied onto the rock layer
 	var zone_count: int = mini(_zones.size(), 4)
-	_terrain_mat.set_shader_parameter("zone_count", zone_count)
+	var zone_data:  PackedVector4Array = PackedVector4Array()
+	var grass_tint: PackedVector4Array = PackedVector4Array()
+	var rock_tint:  PackedVector4Array = PackedVector4Array()
+	zone_data.resize(4)
+	grass_tint.resize(4)
+	rock_tint.resize(4)
 	for i: int in range(zone_count):
-		var zone: BiomeZone = _zones[i] as BiomeZone
-		_terrain_mat.set_shader_parameter(
-			"zone_data[%d]" % i,
-			Vector4(zone.pos.x, zone.pos.y, zone.radius, 0.0))
-		_terrain_mat.set_shader_parameter(
-			"zone_grass_tint[%d]" % i,
-			_ZONE_GRASS_TINT.get(zone.zone_type, Color.WHITE))
-		_terrain_mat.set_shader_parameter(
-			"zone_rock_tint[%d]" % i,
-			_ZONE_ROCK_TINT.get(zone.zone_type, Color.WHITE))
+		var zone: BiomeZone = _zones[i]
+		var g: Color = _ZONE_GRASS_TINT.get(zone.zone_type, Color.WHITE)
+		var k: Color = _ZONE_ROCK_TINT.get(zone.zone_type, Color.WHITE)
+		zone_data[i]  = Vector4(zone.pos.x, zone.pos.y, zone.radius, 0.0)
+		grass_tint[i] = Vector4(g.r, g.g, g.b, g.a)
+		rock_tint[i]  = Vector4(k.r, k.g, k.b, k.a)
+	_terrain_mat.set_shader_parameter("zone_count",      zone_count)
+	_terrain_mat.set_shader_parameter("zone_data",       zone_data)
+	_terrain_mat.set_shader_parameter("zone_grass_tint", grass_tint)
+	_terrain_mat.set_shader_parameter("zone_rock_tint",  rock_tint)
 
 
+# ── Terrain data (runs on a worker thread when build_async) ───────────────── #
+# Only pure math here — no scene tree access.  Results land in member arrays
+# that _finish_build() turns into nodes on the main thread.
+
+func _generate_terrain_data() -> void:
+	var nv: int = _grid_n + 1
+	var samples: PackedVector4Array = PackedVector4Array()
+	samples.resize(nv * nv)
+	for iz: int in range(nv):
+		var wz: float = -_extent + float(iz) * _cell
+		for ix: int in range(nv):
+			samples[iz * nv + ix] = _sample_point(-_extent + float(ix) * _cell, wz)
+
+	var dist: PackedFloat32Array = _coast_distance(samples, nv)
+	var heights: PackedFloat32Array = PackedFloat32Array()
+	heights.resize(nv * nv)
+	for i: int in range(nv * nv):
+		heights[i] = _compose_height(samples[i], dist[i])
+
+	# Collision heightmap: uniform scale by _cell, so heights are stored in cell
+	# units.  Seabed clamped — the boat only ever touches the shallows.
+	var col: PackedFloat32Array = PackedFloat32Array()
+	col.resize(nv * nv)
+	for i: int in range(nv * nv):
+		col[i] = maxf(heights[i], -2.0) / _cell
+
+	_heights        = heights
+	_collision_data = col
+	_chunk_arrays   = _build_chunk_arrays(heights, nv)
+	_tree_xforms    = _place_trees(heights)
 
 
-# ── Geometry ───────────────────────────────────────────────────────────────── #
+func _build_chunk_arrays(heights: PackedFloat32Array, nv: int) -> Array[Array]:
+	var out: Array[Array] = []
+	var chunks: int = int(ceil(float(_grid_n) / float(_CHUNK_CELLS)))
 
-func _build_geometry() -> void:
-	var extent:    float = base_radius * 1.50
-	var cell_size: float = (extent * 2.0) / _grid_n
-	var map_verts: int   = _grid_n + 1
+	for cz: int in range(chunks):
+		for cx: int in range(chunks):
+			var x0: int = cx * _CHUNK_CELLS
+			var z0: int = cz * _CHUNK_CELLS
+			var x1: int = mini(x0 + _CHUNK_CELLS, _grid_n)
+			var z1: int = mini(z0 + _CHUNK_CELLS, _grid_n)
+			var w:  int = x1 - x0 + 1
 
-	var heights := PackedFloat32Array()
-	heights.resize(map_verts * map_verts)
-	for iz: int in range(map_verts):
-		for ix: int in range(map_verts):
-			var wx: float = -extent + ix * cell_size
-			var wz: float = -extent + iz * cell_size
-			heights[iz * map_verts + ix] = _height_at_xy(wx, wz)
-
-	_build_terrain_mesh(heights, extent, cell_size, map_verts)
-	_build_trees()
-	call_deferred("_build_collision", heights, extent, cell_size, map_verts)
-
-
-func _build_terrain_mesh(heights: PackedFloat32Array, extent: float,
-		cell_size: float, map_verts: int) -> void:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-
-	for iz: int in range(_grid_n):
-		for ix: int in range(_grid_n):
-			var v00 := Vector3(-extent + ix       * cell_size, heights[ iz      * map_verts + ix    ], -extent + iz       * cell_size)
-			var v10 := Vector3(-extent + (ix + 1) * cell_size, heights[ iz      * map_verts + ix + 1], -extent + iz       * cell_size)
-			var v01 := Vector3(-extent + ix       * cell_size, heights[(iz + 1) * map_verts + ix    ], -extent + (iz + 1) * cell_size)
-			var v11 := Vector3(-extent + (ix + 1) * cell_size, heights[(iz + 1) * map_verts + ix + 1], -extent + (iz + 1) * cell_size)
-			st.add_vertex(v00); st.add_vertex(v11); st.add_vertex(v10)
-			st.add_vertex(v00); st.add_vertex(v01); st.add_vertex(v11)
-
-	st.generate_normals()
-
-	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
-	mi.custom_aabb = _island_aabb()
-	add_child(mi)
-	mi.set_surface_override_material(0, _terrain_mat)
-
-
-func _island_aabb() -> AABB:
-	var r: float = base_radius * 1.55
-	var h: float = _get_max_height() + 4.0
-	# Lower bound extended to -20 so the underwater coastal slope isn't culled.
-	return AABB(Vector3(-r, -20.0, -r), Vector3(r * 2.0, h + 20.0, r * 2.0))
-
-
-func _build_collision(heights: PackedFloat32Array, extent: float,
-		cell_size: float, map_verts: int) -> void:
-	var face_verts := PackedVector3Array()
-
-	for iz: int in range(_grid_n):
-		for ix: int in range(_grid_n):
-			var h00: float = heights[ iz      * map_verts + ix    ]
-			var h10: float = heights[ iz      * map_verts + ix + 1]
-			var h01: float = heights[(iz + 1) * map_verts + ix    ]
-			var h11: float = heights[(iz + 1) * map_verts + ix + 1]
-
-			if maxf(maxf(h00, h10), maxf(h01, h11)) < 0.05:
+			var indices: PackedInt32Array = PackedInt32Array()
+			for iz: int in range(z0, z1):
+				for ix: int in range(x0, x1):
+					var h00: float = heights[iz * nv + ix]
+					var h10: float = heights[iz * nv + ix + 1]
+					var h01: float = heights[(iz + 1) * nv + ix]
+					var h11: float = heights[(iz + 1) * nv + ix + 1]
+					if maxf(maxf(h00, h10), maxf(h01, h11)) < _MESH_SKIP_DEPTH:
+						continue
+					var i00: int = (iz - z0) * w + (ix - x0)
+					var i10: int = i00 + 1
+					var i01: int = i00 + w
+					var i11: int = i01 + 1
+					# Clockwise seen from above = Godot front face, so back-face
+					# culling works and normals point up.
+					indices.append(i00); indices.append(i10); indices.append(i11)
+					indices.append(i00); indices.append(i11); indices.append(i01)
+			if indices.is_empty():
 				continue
 
-			var v00 := Vector3(-extent + ix       * cell_size, h00, -extent + iz       * cell_size)
-			var v10 := Vector3(-extent + (ix + 1) * cell_size, h10, -extent + iz       * cell_size)
-			var v01 := Vector3(-extent + ix       * cell_size, h01, -extent + (iz + 1) * cell_size)
-			var v11 := Vector3(-extent + (ix + 1) * cell_size, h11, -extent + (iz + 1) * cell_size)
-			face_verts.append(v00); face_verts.append(v11); face_verts.append(v10)
-			face_verts.append(v00); face_verts.append(v01); face_verts.append(v11)
+			var verts:   PackedVector3Array = PackedVector3Array()
+			var normals: PackedVector3Array = PackedVector3Array()
+			verts.resize(w * (z1 - z0 + 1))
+			normals.resize(w * (z1 - z0 + 1))
+			for iz: int in range(z0, z1 + 1):
+				var row:  int = iz * nv
+				var up:   int = maxi(iz - 1, 0) * nv
+				var down: int = mini(iz + 1, _grid_n) * nv
+				for ix: int in range(x0, x1 + 1):
+					var li: int = (iz - z0) * w + (ix - x0)
+					verts[li] = Vector3(-_extent + float(ix) * _cell, heights[row + ix],
+							-_extent + float(iz) * _cell)
+					# Central-difference normal straight from the height grid.
+					var hl: float = heights[row + maxi(ix - 1, 0)]
+					var hr: float = heights[row + mini(ix + 1, _grid_n)]
+					var hu: float = heights[up + ix]
+					var hd: float = heights[down + ix]
+					normals[li] = Vector3(hl - hr, 2.0 * _cell, hu - hd).normalized()
 
-	var shape := ConcavePolygonShape3D.new()
-	shape.set_faces(face_verts)
-	shape.backface_collision = true
-	var col := CollisionShape3D.new()
-	col.shape = shape
-	add_child(col)
+			var arrays: Array = []
+			arrays.resize(Mesh.ARRAY_MAX)
+			arrays[Mesh.ARRAY_VERTEX] = verts
+			arrays[Mesh.ARRAY_NORMAL] = normals
+			arrays[Mesh.ARRAY_INDEX]  = indices
+			out.append(arrays)
+	return out
 
 
-# ── Trees ─────────────────────────────────────────────────────────────────── #
-
-func _build_trees() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = island_name.hash()
+func _place_trees(heights: PackedFloat32Array) -> Dictionary:
+	var out: Dictionary = {}
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = _seed
 
 	var placed:   int = 0
 	var attempts: int = 0
 	while placed < num_trees and attempts < num_trees * 10:
 		attempts += 1
+		# sqrt → uniform over the disc area instead of bunching at the centre.
 		var angle: float = rng.randf() * TAU
-		var r:     float = rng.randf_range(0.0, base_radius * 0.92)
+		var r:     float = sqrt(rng.randf()) * base_radius * 1.25
 		var x:     float = cos(angle) * r
 		var z:     float = sin(angle) * r
-		var r_norm: float = r / base_radius
 
-		# ATOLLs only plant on the ring, not the central lagoon.
-		if island_type == IslandType.ATOLL and (r_norm < 0.35 or r_norm > 0.78):
+		var y: float = _grid_height(heights, x, z)
+		if y < _TREE_MIN_HEIGHT:
 			continue
 
-		var y: float = _height_at_xy(x, z)
-		if y < 0.20:
-			continue
-
-		# Use zone-local density threshold and tree pool.
 		var zt: int = _dominant_zone_at(x, z)
 		var density_threshold: float = _ZONE_DENSITY_THRESHOLD.get(zt, 0.25)
-		var density: float = _forest_noise.get_noise_2d(x * 0.5, z * 0.5) * 0.5 + 0.5
+		var density: float = _forest_noise.get_noise_2d(x, z) * 0.5 + 0.5
 		if density < density_threshold:
 			continue
 
-		_build_tree(rng, Vector3(x, y, z), zt)
+		var pool: Array = _ZONE_TREE_POOLS.get(zt, [])
+		if pool.is_empty():
+			continue
+		var path: String = pool[rng.randi() % pool.size()]
+
+		var s: float = rng.randf_range(_TREE_SCALE_MIN, _TREE_SCALE_MAX)
+		var basis: Basis = Basis(Vector3.UP, rng.randf() * TAU).scaled(
+				Vector3(s, s * rng.randf_range(0.90, 1.15), s))
+		if not out.has(path):
+			out[path] = []
+		(out[path] as Array).append(Transform3D(basis, Vector3(x, y - 0.1, z)))
 		placed += 1
+	return out
 
 
-func _build_tree(rng: RandomNumberGenerator, base_pos: Vector3, zone_type: int) -> void:
-	var pool: Array = _ZONE_TREE_POOLS.get(zone_type, [])
-	if pool.is_empty():
-		return
+# ── Node building (main thread) ───────────────────────────────────────────── #
 
-	var path: String = pool[rng.randi() % pool.size()]
+func _finish_build() -> void:
+	for arrays: Array in _chunk_arrays:
+		var mesh: ArrayMesh = ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		mesh.surface_set_material(0, _terrain_mat)
+		var mi: MeshInstance3D = MeshInstance3D.new()
+		mi.mesh = mesh
+		add_child(mi)
+	_chunk_arrays.clear()
+
+	_build_collision()
+	_build_trees()
+
+
+func _build_collision() -> void:
+	var nv: int = _grid_n + 1
+	var shape: HeightMapShape3D = HeightMapShape3D.new()
+	shape.map_width = nv
+	shape.map_depth = nv
+	shape.map_data  = _collision_data
+	var col: CollisionShape3D = CollisionShape3D.new()
+	col.shape = shape
+	# HeightMapShape3D is centred with 1-unit spacing; uniform scale maps it onto
+	# the render grid (heights were pre-divided by _cell to match).
+	col.scale = Vector3(_cell, _cell, _cell)
+	add_child(col)
+	_collision_data = PackedFloat32Array()
+
+
+# One MultiMeshInstance3D per tree model part: one draw call for every copy of
+# that model on this island, instead of one node (and draw call) per tree.
+func _build_trees() -> void:
+	for path: String in _tree_xforms.keys():
+		var xforms: Array = _tree_xforms[path]
+		for part: Array in _tree_parts(path):
+			var local: Transform3D = part[1]
+			var mm: MultiMesh = MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = part[0] as Mesh
+			mm.instance_count = xforms.size()
+			for i: int in range(xforms.size()):
+				mm.set_instance_transform(i, (xforms[i] as Transform3D) * local)
+			var mmi: MultiMeshInstance3D = MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			var mat: Material = part[2] as Material
+			if mat != null:
+				mmi.material_override = mat
+			add_child(mmi)
+	_tree_xforms.clear()
+
+
+## Extracts [Mesh, transform relative to GLB root, override Material or null]
+## for every MeshInstance3D in a tree GLB.  Cached across all islands.
+static func _tree_parts(path: String) -> Array:
+	if _tree_part_cache.has(path):
+		return _tree_part_cache[path]
+	var parts: Array = []
 	var packed: PackedScene = load(path) as PackedScene
 	if packed == null:
 		push_warning("Island: failed to load tree GLB: %s" % path)
-		return
+		_tree_part_cache[path] = parts
+		return parts
 
-	var tree: Node3D = packed.instantiate() as Node3D
-	if tree == null:
-		return
+	var root: Node = packed.instantiate()
+	for node: Node in root.find_children("*", "MeshInstance3D", true, false):
+		var mi: MeshInstance3D = node as MeshInstance3D
+		if mi.mesh == null:
+			continue
+		var xf: Transform3D = Transform3D.IDENTITY
+		var n: Node = mi
+		while n != root and n is Node3D:
+			xf = (n as Node3D).transform * xf
+			n = n.get_parent()
+		var mat: Material = mi.material_override
+		if mat == null and mi.mesh.get_surface_count() == 1:
+			mat = mi.get_surface_override_material(0)
+		parts.append([mi.mesh, xf, mat])
+	root.free()
 
-	tree.position   = base_pos
-	tree.rotation.y = rng.randf() * TAU
-
-	var s: float = rng.randf_range(_TREE_SCALE_MIN, _TREE_SCALE_MAX)
-	tree.scale = Vector3(s, s * rng.randf_range(0.90, 1.15), s)
-
-	var aabb: AABB = _island_aabb()
-	for m: Node in tree.find_children("*", "MeshInstance3D"):
-		(m as MeshInstance3D).custom_aabb = aabb
-
-	add_child(tree)
+	_tree_part_cache[path] = parts
+	return parts
 
 
 # ── Discovery ──────────────────────────────────────────────────────────────── #
 
 func _physics_process(_delta: float) -> void:
-	if discovered or _boat == null:
+	if _boat == null:
 		return
-	var self_xz := Vector2(global_position.x, global_position.z)
-	var boat_xz := Vector2(_boat.global_position.x, _boat.global_position.z)
+	var self_xz: Vector2 = Vector2(global_position.x, global_position.z)
+	var boat_xz: Vector2 = Vector2(_boat.global_position.x, _boat.global_position.z)
 	if self_xz.distance_to(boat_xz) <= discovery_radius:
 		_discover()
 
 
 func _discover() -> void:
 	discovered = true
+	set_physics_process(false)
 	island_discovered.emit(island_name, Vector2(global_position.x, global_position.z), resources)
 	var fog: FogOfWar = get_tree().get_first_node_in_group("fog_of_war") as FogOfWar
 	if fog != null:
-		var island_xz: Vector2 = Vector2(global_position.x, global_position.z)
-		fog.reveal_area(island_xz, base_radius * 1.5 + _get_max_height() * 2.0 + 15.0)
+		# Fog is sampled at true world positions now, so the reveal only needs
+		# to cover the island's footprint (coasts reach ~1.25 × base_radius).
+		fog.reveal_area(Vector2(global_position.x, global_position.z), base_radius * 1.35 + 12.0)
 	print("Discovered: ", island_name)
