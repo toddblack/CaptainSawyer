@@ -16,8 +16,8 @@ const WORLD_HALF     := 500.0
 const MOVE_THRESHOLD := 0.5
 
 # Base reveal radius for Tier 1 (Dinghy). Each subsequent ship tier adds ~12%.
-# Tier 1: 26  |  Tier 2: 29  |  Tier 3: 33  |  Tier 4: 37
-const REVEAL_RADIUS_BASE: float = 26.0
+# Tier 1: 20  |  Tier 2: 23  |  Tier 3: 26  |  Tier 4: 30
+const REVEAL_RADIUS_BASE: float = 20.0
 
 var _reveal_radius: float = REVEAL_RADIUS_BASE  # updated by set_ship_tier()
 
@@ -46,21 +46,6 @@ uniform vec3  cam_up;
 uniform vec3  cam_fwd;
 uniform float cam_size;    // full viewport height in world units (Camera3D.size)
 uniform float cam_aspect;  // viewport width / height
-
-float hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float smooth_noise(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	return mix(
-		mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
-		mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
-		f.y
-	);
-}
 
 void fragment() {
 	// Convert screen UV → world-space ray origin (orthographic: all rays parallel).
@@ -105,20 +90,7 @@ void fragment() {
 
 	if (fog_mask < 0.02) discard;
 
-	vec2 uv1 = fog_uv_safe * 7.0  + vec2( TIME * 0.010,  TIME * 0.006);
-	vec2 uv2 = fog_uv_safe * 13.0 + vec2(-TIME * 0.007,  TIME * 0.009);
-	// Rotate each sample by a different irrational angle so the value-noise grid
-	// never aligns with world or screen axes (eliminates visible grid seams).
-	// uv1r ≈ 22°, uv2r ≈ 55° — neither aligns with the isometric 45° screen axes.
-	vec2 uv1r = vec2(uv1.x * 0.927 - uv1.y * 0.374, uv1.x * 0.374 + uv1.y * 0.927);
-	vec2 uv2r = vec2(uv2.x * 0.574 - uv2.y * 0.819, uv2.x * 0.819 + uv2.y * 0.574);
-	// Domain-warp: offset each layer's UV by a low-freq noise field so the value-noise
-	// grid never aligns into visible diagonal bands across the screen.
-	vec2 warp = vec2(smooth_noise(uv2r + vec2(3.7, 1.3)),
-	                 smooth_noise(uv1r + vec2(1.7, 4.2))) * 0.22;
-	float n = smooth_noise(uv1r + warp) * 0.6 + smooth_noise(uv2r - warp * 0.5) * 0.4;
-
-	COLOR = vec4(cloud_color.rgb * (0.90 + n * 0.10), fog_mask * (0.72 + n * 0.22));
+	COLOR = vec4(cloud_color.rgb, fog_mask * 0.85);
 }
 """
 

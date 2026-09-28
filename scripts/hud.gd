@@ -32,11 +32,79 @@ var _map_rect: Rect2
 
 # Discovery toast — drawn entirely in _draw() to share the same coord space as the arc.
 # No child Controls involved: position is guaranteed correct without layout fights.
-var _parchment_tex:   Texture2D = null
-var _toast_alpha:     float     = 0.0   # tweened 0→1 on show, 1→0 on dismiss
-var _toast_name_text: String    = ""
-var _toast_res_text:  String    = ""
-var _toast_tween:     Tween     = null
+var _parchment_tex:   Texture2D    = null
+var _toast_alpha:     float        = 0.0   # tweened 0→1 on show, 1→0 on dismiss
+var _toast_name_text: String       = ""
+var _toast_res_icons: Array[String] = []   # up to 6 resource keys, sorted by amount desc
+var _toast_tween:     Tween        = null
+
+# ── Resource icon sheets ─────────────────────────────────────────────────────
+# Sheet index: 0=tropical, 1=volcanic, 2=atoll, 3=highland, 4=forest(future),
+#              5=desert(future), 6=plains(future).
+# null entries are drawn as a grey placeholder rect.
+var _icon_sheets: Array[Texture2D] = []
+# Pre-built AtlasTexture per resource key — filter_clip=true prevents bleed at cell edges.
+var _icon_atlas: Dictionary = {}   # String -> AtlasTexture
+
+# resource_key → [sheet_idx: int, col: int, row: int]
+# Matches _ZONE_RESOURCE_TABLE keys in island.gd.
+# Column order is left→right, row 0 is top — maps directly to ICON_XX_01..08.
+const _RESOURCE_ICON: Dictionary = {
+	# Tropical (sheet 0) — islandResources_tropical.webp
+	"coconut":          [0, 0, 0],
+	"breadfruit":       [0, 1, 0],
+	"sugarcane":        [0, 2, 0],
+	"palm_fronds":      [0, 3, 0],
+	"hardwood_teak":    [0, 0, 1],
+	"quinine_bark":     [0, 1, 1],
+	"bamboo_stalks":    [0, 2, 1],
+	"volcanic_guano":   [0, 3, 1],
+	# Volcanic (sheet 1) — islandResources_volcanic.webp
+	"geothermal_water": [1, 0, 0],
+	"taro_root":        [1, 1, 0],
+	"basalt_rock":      [1, 2, 0],
+	"obsidian":         [1, 3, 0],
+	"sulfur":           [1, 0, 1],
+	"lodestone":        [1, 1, 1],
+	"pumice_stone":     [1, 2, 1],
+	"native_copper":    [1, 3, 1],
+	# Atoll (sheet 2) — islandResources_atoll.webp
+	"seabird_eggs":     [2, 0, 0],
+	"pelagic_fish":     [2, 1, 0],
+	"pandanus_fruit":   [2, 2, 0],
+	"driftwood":        [2, 3, 0],
+	"clam_shell":       [2, 0, 1],
+	"black_pearl":      [2, 1, 1],
+	"coral_blocks":     [2, 2, 1],
+	"seagrass_fibre":   [2, 3, 1],
+	# Highland (sheet 3) — islandResources_highland.webp
+	"wild_berries":     [3, 0, 0],
+	"root_vegetable":   [3, 1, 0],
+	"highland_wool":    [3, 2, 0],
+	"stone_blocks":     [3, 3, 0],
+	"hematite":         [3, 0, 1],
+	"clay":             [3, 1, 1],
+	"flax_stalks":      [3, 2, 1],
+	"galena":           [3, 3, 1],
+	# Plains (sheet 6 — placeholder until sheet ships)
+	"wild_grains":      [6, 0, 0],
+	"wild_game_bison":  [6, 1, 0],
+	"thatch_grass":     [6, 2, 0],
+	"hemp_fibre":       [6, 3, 0],
+	"limestone_block":  [6, 0, 1],
+	"coal_lump":        [6, 1, 1],
+	"wild_flowers":     [6, 2, 1],
+	"horses":           [6, 3, 1],
+	# Desert (sheet 5 — placeholder until sheet ships)
+	"prickly_pear":     [5, 0, 0],
+	"reptile_meat":     [5, 1, 0],
+	"sandstone_block":  [5, 2, 0],
+	"silica_sand":      [5, 3, 0],
+	"niter":            [5, 0, 1],
+	"acacia_wood":      [5, 1, 1],
+	"dried_aloe":       [5, 2, 1],
+	"obsidian_shards":  [5, 3, 1],
+}
 
 # Arc panel clipping — bodies live in a child Control so clip_children masks them
 var _arc_clip:   Control = null
@@ -92,6 +160,39 @@ func _ready() -> void:
 
 	# Toast drawn entirely in _draw() — load texture here, no child nodes needed
 	_parchment_tex = load("res://assets/textures/toastBG.webp") as Texture2D
+
+	# Icon sheets: indices must match _RESOURCE_ICON sheet_idx values.
+	# null = future biome, drawn as grey placeholder when needed.
+	_icon_sheets.resize(7)
+	var _sheet_paths: Array[String] = [
+		"res://assets/textures/islandResources_tropical.webp",   # 0
+		"res://assets/textures/islandResources_volcanic.webp",   # 1
+		"res://assets/textures/islandResources_atoll.webp",      # 2
+		"res://assets/textures/islandResources_highland.webp",   # 3
+		"",  # 4 forest — future
+		"",  # 5 desert — future
+		"",  # 6 plains — future
+	]
+	for i: int in range(_sheet_paths.size()):
+		if _sheet_paths[i] != "":
+			_icon_sheets[i] = load(_sheet_paths[i]) as Texture2D
+
+	# Build one AtlasTexture per resource key.
+	# filter_clip=true clamps GPU sampling to the region, preventing bleed between cells.
+	# Sheets are 128×68: 4 cols × 32px wide, 2 rows × 34px tall.
+	const ICON_CELL_W: int = 32
+	const ICON_CELL_H: int = 34
+	for key: String in _RESOURCE_ICON.keys():
+		var icon_data: Array  = _RESOURCE_ICON[key]
+		var sheet_idx: int    = icon_data[0]
+		if sheet_idx >= _icon_sheets.size() or _icon_sheets[sheet_idx] == null:
+			continue
+		var at: AtlasTexture  = AtlasTexture.new()
+		at.atlas       = _icon_sheets[sheet_idx]
+		at.region      = Rect2(icon_data[1] * ICON_CELL_W, icon_data[2] * ICON_CELL_H,
+		                       ICON_CELL_W, ICON_CELL_H)
+		at.filter_clip = true
+		_icon_atlas[key] = at
 
 	# Initialise _map_rect to a sane default before first _draw()
 	var vp: Rect2 = get_viewport_rect()
@@ -584,18 +685,25 @@ func _draw_toast(vp: Rect2) -> void:
 		Color(0.22, 0.12, 0.05, _toast_alpha)
 	)
 
-	# Resource line — smaller, just below name
-	if _toast_res_text != "":
-		var res_sz: int   = 14
-		var res_y:  float = name_y + float(name_sz) + 10.0
-		draw_string(font,
-			Vector2(tx, res_y),
-			_toast_res_text,
-			HORIZONTAL_ALIGNMENT_CENTER,
-			TOAST_W,
-			res_sz,
-			Color(0.35, 0.22, 0.10, _toast_alpha)
-		)
+	# Resource icons — row of up to 6, centred on the scroll, below island name.
+	const ICON_DISPLAY_W: float = 32.0   # matches sheet cell width
+	const ICON_DISPLAY_H: float = 34.0   # matches sheet cell height
+	const ICON_GAP:       float = 8.0
+	if not _toast_res_icons.is_empty():
+		var n: int       = _toast_res_icons.size()
+		var row_w: float = float(n) * ICON_DISPLAY_W + float(n - 1) * ICON_GAP
+		var ix: float    = tx + (TOAST_W - row_w) * 0.5
+		var iy: float    = name_y + float(name_sz) + 14.0
+		for key: String in _toast_res_icons:
+			var dest: Rect2 = Rect2(ix, iy, ICON_DISPLAY_W, ICON_DISPLAY_H)
+			var at: AtlasTexture = _icon_atlas.get(key, null) as AtlasTexture
+			if at != null:
+				draw_texture_rect(at, dest, false, Color(1.0, 1.0, 1.0, _toast_alpha))
+			else:
+				# Placeholder for future biome sheets
+				draw_rect(dest, Color(0.55, 0.48, 0.38, _toast_alpha * 0.6))
+				draw_rect(dest, Color(0.30, 0.22, 0.12, _toast_alpha * 0.5), false, 1.5)
+			ix += ICON_DISPLAY_W + ICON_GAP
 
 	# "tap to dismiss" hint — bottom of scroll
 	var hint_sz: int   = 12
@@ -618,16 +726,21 @@ func _on_island_discovered(p_island_name: String, world_pos: Vector2, res: Dicti
 	_islands.append(world_pos)
 	_toast_name_text = p_island_name
 
-	# Build a human-readable resource list: "iron ore · lodestone · copper"
-	var names: Array[String] = []
+	# Sort resources by amount descending, take top 6 by dominant-zone weighting.
+	var pairs: Array = []
 	for key: String in res.keys():
-		names.append(key.replace("_", " "))
-	_toast_res_text = " · ".join(names)
+		pairs.append([key, res[key]])
+	pairs.sort_custom(func(a: Array, b: Array) -> bool: return a[1] > b[1])
+	_toast_res_icons.clear()
+	for i: int in range(mini(6, pairs.size())):
+		_toast_res_icons.append(pairs[i][0])
 
 	if _toast_tween:
 		_toast_tween.kill()
 	_toast_tween = create_tween()
 	_toast_tween.tween_method(_set_toast_alpha, _toast_alpha, 1.0, 0.4).set_ease(Tween.EASE_OUT)
+	_toast_tween.tween_interval(6.0)
+	_toast_tween.tween_method(_set_toast_alpha, 1.0, 0.0, 0.5).set_ease(Tween.EASE_IN)
 
 
 func _input(event: InputEvent) -> void:

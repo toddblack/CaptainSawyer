@@ -21,6 +21,9 @@
       "WebFetch(domain:technology.riotgames.com)",
       "WebFetch(domain:blog.frost.kiwi)",
       "WebFetch(domain:oscarpm5.github.io)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\legio\\.claude\\projects\\c--Users-legio-Documents--work-letsPlayClaudeCode-round1-CaptainSawyer\\memory"
     ]
   }
 }
