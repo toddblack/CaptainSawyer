@@ -2,6 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
+uid="uid://c8312mku12mw2"
+path="res://.godot/imported/cliff_sandstone.png-0d6d7bc83c0d0d5e716cb6d012b72b09.ctex"
 metadata={
 "vram_texture": false
 }
@@ -9,6 +11,7 @@ metadata={
 [deps]
 
 source_file="res://assets/textures/terrain/cliff_sandstone.png"
+dest_files=["res://.godot/imported/cliff_sandstone.png-0d6d7bc83c0d0d5e716cb6d012b72b09.ctex"]
 
 [params]
 
