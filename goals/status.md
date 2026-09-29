@@ -1,7 +1,7 @@
 # Captain Sawyer — Session Status & Handoff
 
 > Read this first when picking the project back up. Update it at the end of every session.
-> *Last updated: 2026-09-28 (end of day)*
+> *Last updated: 2026-09-29*
 
 ---
 
@@ -10,23 +10,16 @@
 ### Branches
 | Branch | State |
 |---|---|
-| `main` @ `3ffb240` | ✅ Verified in Godot by Todd. Natural islands, depth-based shores, world-space fog, seamless terrain textures. |
-| `claude-design-assets` @ `38eb770` | ⚠️ **Not yet run in Godot.** Smooth coastlines + Claude Design tiles + 3D tree clusters. Merge to `main` (fast-forward) once verified. |
-| `terrain-cliffs` (off `claude-design-assets`) | ⚠️ **Not yet run.** Cliff coasts, terraced hills, river gorges; slope-painted biome cliff textures. Verifying this also verifies the branch below it. |
+| `main` @ `8e0e65b` | ✅ Verified in Godot by Todd (2026-09-29, "looking incredible"). Includes smooth coastlines, Claude Design tiles + 3D tree clusters, and terrain cliffs. |
+| `claude-design-assets`, `terrain-cliffs` | Merged into `main` (fast-forward); safe to delete. |
 
-### Verify on `claude-design-assets` (Todd runs Godot — don't launch it for him)
-1. **Coastline corners rounded** — waterline cells are split 4×4 with Catmull-Rom heights.
-   Look for any thin **cracks** along the waterline (would mean the linear-edge rule failed).
-2. **Foam** varies in width along the shore (not an even outline).
-3. **Terrain tiles** — crisp 32-px pixel art, dithered transitions sand→grass→rock.
-   If too chunky: `tile_world` 4 → 2 in `island_terrain.gdshader`.
-4. **Trees** — Claude Design low-poly clusters per biome. Check **scale**
-   (`_TREE_SCALE_MIN/MAX` = 0.9–1.3 in `island.gd`) and **density** (tree counts in
-   `island_spawner.gd` `_roll_trees`). Volcanic `ember` material should glow at night.
-5. First open imports 60 GLBs — may take a moment.
+### Cliffs — tuning knobs if Todd wants changes
+- Per-biome cliff height / how much coast is cliff / terrace step & strength: `_ZONE_CLIFFS` in `island.gd`.
+- How steep counts as cliff: `cliff_ny_start` / `cliff_ny_full` in `island_terrain.gdshader`.
+- Biome → cliff texture: `_ZONE_CLIFF_TEX` in `island.gd`. `cliffIce` is unused (for a future polar biome).
 
 ### Open housekeeping (ask Todd)
-- `incoming/claude_design/` is **untracked** (~6 MB, duplicates the GLBs). Add to `.gitignore`? Undecided.
+- ~~`incoming/` untracked~~ → now in `.gitignore` + `.gdignore` (2026-09-29).
 - Old tree GLBs in `assets/models/trees/{tropical,volcanic,atoll,highland}/` are now unused — delete?
 - `assets/textures/sawyer_atlas_32px_day.png` (Claude Design atlas) is unused; per-tile files are used instead.
 - Todd's "happy accident" 32-px sand was replaced by Claude Design's sand; old one is in `3ffb240` if wanted.
@@ -34,7 +27,7 @@
 ---
 
 ## Next up (in order)
-1. Verify + merge `claude-design-assets`.
+1. ~~Verify + merge `claude-design-assets`~~ ✅ done, along with terrain cliffs.
 2. **Save system** — build priority #5. World = `IslandSpawner.world_seed`; also persist fog texture
    (`FogOfWar._fog_data`), discovered islands, `WorldClock` time/day, `VoyageResources`,
    boat transform. Mobile expects auto-save. Decide death/carry-over rules (see game_design.md §2).
