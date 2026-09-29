@@ -85,9 +85,14 @@ const _ZONE_DENSITY_THRESHOLD: Dictionary = {
 	5: 0.65,   # DESERT
 }
 
-# ── Terrain shader + atlas ─────────────────────────────────────────────────── #
+# ── Terrain shader + textures ──────────────────────────────────────────────── #
 const _TERRAIN_SHADER = preload("res://assets/materials/island_terrain.gdshader")
-const _TEX_ATLAS      = preload("res://assets/textures/dirt_sand_water_stone.png")
+# One seamless texture per layer — see goals/add_shader.md "Terrain textures"
+# for the spec.  Swap files in place to restyle every island.
+const _TEX_SAND:      String = "res://assets/textures/terrain/sand.png"
+const _TEX_GRASS:     String = "res://assets/textures/terrain/grass.png"
+const _TEX_ROCK:      String = "res://assets/textures/terrain/rock.png"
+const _TEX_LAVA_ROCK: String = "res://assets/textures/terrain/lava_rock.png"
 
 var _terrain_mat: ShaderMaterial
 
@@ -684,22 +689,16 @@ func _build_materials() -> void:
 	_terrain_mat = ShaderMaterial.new()
 	_terrain_mat.shader = _TERRAIN_SHADER
 
-	_terrain_mat.set_shader_parameter("terrain_atlas",     _TEX_ATLAS)
-	_terrain_mat.set_shader_parameter("beach_tile_offset", Vector2(0.00, 0.25))
-	_terrain_mat.set_shader_parameter("beach_tile_scale",  Vector2(0.25, 0.25))
-	_terrain_mat.set_shader_parameter("grass_tile_offset", Vector2(0.00, 0.00))
-	_terrain_mat.set_shader_parameter("grass_tile_scale",  Vector2(0.25, 0.25))
-	_terrain_mat.set_shader_parameter("world_tile_size",   1.0)
-
-	# Rock tile: lava if any zone is VOLCANIC, mossy stone otherwise.
+	# Rock layer: lava if any zone is VOLCANIC, mossy stone otherwise.
 	var has_volcanic: bool = false
 	for zone: BiomeZone in _zones:
 		if zone.zone_type == ZoneType.VOLCANIC:
 			has_volcanic = true
 			break
-	var rock_offset: Vector2 = Vector2(0.50, 0.50) if has_volcanic else Vector2(0.50, 0.00)
-	_terrain_mat.set_shader_parameter("rock_tile_offset", rock_offset)
-	_terrain_mat.set_shader_parameter("rock_tile_scale",  Vector2(0.25, 0.25))
+	var rock_path: String = _TEX_LAVA_ROCK if has_volcanic else _TEX_ROCK
+	_terrain_mat.set_shader_parameter("sand_tex",  load(_TEX_SAND) as Texture2D)
+	_terrain_mat.set_shader_parameter("grass_tex", load(_TEX_GRASS) as Texture2D)
+	_terrain_mat.set_shader_parameter("rock_tex",  load(rock_path) as Texture2D)
 
 	var max_h: float = _get_max_height()
 	if island_type == IslandType.ATOLL:

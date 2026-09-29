@@ -117,7 +117,38 @@ Add the shader as an `ext_resource` at the top of main.tscn:
 
 ---
 
+## Terrain textures (supplying art)
+
+Island terrain uses **one seamless texture per layer**, not an atlas:
+`assets/textures/terrain/{sand,grass,rock,lava_rock}.png`. Replace a file in place to
+restyle every island. Each texture must be:
+
+- **Seamless on all four edges** — the GPU wraps it (`repeat_enable`). Test by tiling 2×2.
+- **Square, 256–1024 px**, top-down, **flat lighting** (no baked shadow direction).
+- **No borders, grid lines, labels or watermarks.**
+- **No directional features** — no drawn shorelines, paths or wave edges. The terrain
+  and water shaders make coastlines. Small scattered details (pebbles, flowers) are fine.
+- Not too high-contrast at large scale — big dark/light blobs make repetition obvious.
+
+Scale: `tile_world` (default 4 world units per repeat). A 256-px pixel-art tile at 4 wu
+is ~1 texel per screen pixel at default zoom — crisp. Anti-tiling (`sample_norep`) and
+macro `variation` hide the repeat; neither needs art changes.
+
+Atlas sheets drawn as 2D-tilemap pieces (`beach_watersEdge_rocks.png`,
+`grasses_dirt.png`) don't fit a 3D heightfield blend — use them only as reference.
+The placeholders were sliced from `dirt_sand_water_stone.png` and made seamless with a
+half-offset blend (baked once, offline).
+
+---
+
 ## Gotchas
+
+- **Texture atlases + `fract()` tiling = seams and mip bleed.** Use separate textures with
+  `repeat_enable` instead.
+- **Colour textures need `source_color`** on the sampler hint, or sRGB PNGs are read as
+  linear (washed-out / wrong-looking colours).
+- **`dFdx`/`dFdy` inside an `if` are undefined** (neighbouring pixels may take the other
+  branch). Compute derivatives at the top of `fragment()` and pass them to `textureGrad`.
 
 - **`VERTEX` in `fragment()` is VIEW space, not world space** — always use a `varying vec2 world_uv` populated in `vertex()` using `MODEL_MATRIX * vec4(VERTEX, 1.0)`.
 - **Transparency requires TWO things**: `blend_mix` in `render_mode` AND setting `ALPHA` in `fragment()`. Missing either → no transparency.

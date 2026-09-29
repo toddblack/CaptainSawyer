@@ -192,7 +192,7 @@ func _ready() -> void:
 		var at: AtlasTexture  = AtlasTexture.new()
 		at.atlas       = _icon_sheets[sheet_idx]
 		at.region      = Rect2(icon_data[1] * ICON_CELL_W, icon_data[2] * ICON_CELL_H,
-		                       ICON_CELL_W, ICON_CELL_H)
+							   ICON_CELL_W, ICON_CELL_H)
 		at.filter_clip = true
 		_icon_atlas[key] = at
 

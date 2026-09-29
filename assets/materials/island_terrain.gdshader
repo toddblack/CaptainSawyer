@@ -2,25 +2,24 @@ shader_type spatial;
 // Default back-face culling: island.gd winds triangles clockwise seen from
 // above (Godot's front face), so only the top surface is rasterised.
 
-// ── Tile atlas ────────────────────────────────────────────────────────────
-// 4×4 grid of 256-px tiles (1024×1024 atlas).  Each tile_offset selects the
-// tile's top-left corner in UV space; tile_scale covers one tile = (0.25,0.25).
-// ─────────────────────────────────────────────────────────────────────────
+// ── Layer textures ────────────────────────────────────────────────────────
+// One seamless texture per material (see goals/add_shader.md → "Terrain
+// textures").  repeat_enable lets the GPU wrap them — no atlas seam hacks.
+// source_color: the PNGs are sRGB and must be linearised before lighting.
+uniform sampler2D sand_tex  : source_color, repeat_enable, filter_linear_mipmap_anisotropic;
+uniform sampler2D grass_tex : source_color, repeat_enable, filter_linear_mipmap_anisotropic;
+uniform sampler2D rock_tex  : source_color, repeat_enable, filter_linear_mipmap_anisotropic;
 
-uniform sampler2D terrain_atlas : filter_linear_mipmap, repeat_disable;
-
-uniform vec2  beach_tile_offset = vec2(0.0,  0.25);
-uniform vec2  beach_tile_scale  = vec2(0.25, 0.25);
-uniform vec2  grass_tile_offset = vec2(0.0,  0.0);
-uniform vec2  grass_tile_scale  = vec2(0.25, 0.25);
-uniform vec2  rock_tile_offset  = vec2(0.5,  0.0);
-uniform vec2  rock_tile_scale   = vec2(0.25, 0.25);
+// World units covered by one repeat of a texture.  ~4 puts a 256-px pixel-art
+// tile close to 1 texel per screen pixel at the default zoom.
+uniform float tile_world = 4.0;
+// Large-scale brightness variation that breaks up uniform fields (0 = off).
+uniform float variation  = 0.12;
 
 uniform float blend_low      = 0.8;
 uniform float blend_high     = 1.8;
 uniform float rock_low       = 5.0;
 uniform float rock_high      = 8.0;
-uniform float world_tile_size = 2.0;
 
 // River — must match Island._river_valley() (island-local space).
 uniform float has_river     = 0.0;
@@ -52,24 +51,36 @@ void vertex() {
 	v_height    = VERTEX.y;
 }
 
-// Dual-grid seamless tile: blend two half-phase samples so seam edges from
-// one sample always fall at the centre of the other, eliminating visible
-// tile-boundary lines from the atlas.
-vec4 tile(vec2 wxz, vec2 offset, vec2 scale) {
-	vec2 p  = wxz / world_tile_size;
-	vec2 p2 = p + vec2(0.5);
+float hash12(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
 
-	vec2 uv1 = fract(p)  * scale + offset;
-	vec2 uv2 = fract(p2) * scale + offset;
+float value_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash12(i),                   hash12(i + vec2(1.0, 0.0)), f.x),
+	           mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 
-	// Weight by proximity to each sample's own seam (0 at seam, 1 at centre)
-	vec2 f1 = min(fract(p),  1.0 - fract(p))  * 2.0;
-	vec2 f2 = min(fract(p2), 1.0 - fract(p2)) * 2.0;
-	float w1 = f1.x * f1.y;
-	float w2 = f2.x * f2.y;
-
-	return (texture(terrain_atlas, uv1) * w1 + texture(terrain_atlas, uv2) * w2)
-	       / max(w1 + w2, 0.0001);
+// Anti-tiling sample (Inigo Quilez, "texture repetition" technique 3): a slow
+// noise picks one of 8 random offsets per region and cross-fades between two
+// of them, so the eye never finds the repeat.  Two taps per call.
+// textureGrad keeps mip selection smooth across the offset jumps.  ddx/ddy are
+// passed in: derivatives are undefined inside non-uniform branches, so they're
+// computed once at the top of fragment() before any `if`.
+vec3 sample_norep(sampler2D tex, vec2 uv, vec2 ddx, vec2 ddy) {
+	float k  = value_noise(uv * 0.35) * 8.0;
+	float ia = floor(k);
+	float f  = fract(k);
+	vec2 off_a = sin(vec2(3.0, 7.0) * ia);
+	vec2 off_b = sin(vec2(3.0, 7.0) * (ia + 1.0));
+	vec3 a = textureGrad(tex, uv + off_a, ddx, ddy).rgb;
+	vec3 b = textureGrad(tex, uv + off_b, ddx, ddy).rgb;
+	float contrast = dot(a - b, vec3(1.0 / 3.0));
+	return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * contrast));
 }
 
 float river_mask(vec2 p) {
@@ -88,15 +99,23 @@ void fragment() {
 		discard;
 	}
 
-	vec2 wxz = v_world_pos.xz;
+	vec2 uv  = v_world_pos.xz / tile_world;
+	vec2 ddx = dFdx(uv);
+	vec2 ddy = dFdy(uv);
 
-	vec4 beach_col = tile(wxz, beach_tile_offset, beach_tile_scale);
-	vec4 grass_col = tile(wxz, grass_tile_offset, grass_tile_scale);
-	vec4 rock_col  = tile(wxz, rock_tile_offset,  rock_tile_scale);
+	float t_grass = smoothstep(blend_low, blend_high, v_height);
+	float t_rock  = smoothstep(rock_low,  rock_high,  v_height);
 
-	float t_grass = smoothstep(blend_low,  blend_high, v_height);
-	float t_rock  = smoothstep(rock_low,   rock_high,  v_height);
-	vec4  col     = mix(mix(beach_col, grass_col, t_grass), rock_col, t_rock);
+	// Only sample layers that actually contribute — most pixels are one layer,
+	// which matters on mobile (each layer is two texture taps).
+	vec3 sand_col = sample_norep(sand_tex, uv, ddx, ddy);
+	vec3 col      = sand_col;
+	if (t_grass > 0.001 && t_rock < 0.999) {
+		col = mix(col, sample_norep(grass_tex, uv, ddx, ddy), t_grass);
+	}
+	if (t_rock > 0.001) {
+		col = mix(col, sample_norep(rock_tex, uv, ddx, ddy), t_rock);
+	}
 
 	// Zone-based biome tint: Gaussian-weighted blend of grass/rock tints.
 	vec3  tint_accum = vec3(0.0);
@@ -110,20 +129,23 @@ void fragment() {
 		w_sum      += w;
 	}
 	if (w_sum > 1e-20) {
-		col.rgb *= tint_accum / w_sum;
+		col *= tint_accum / w_sum;
 	}
 
 	if (has_river > 0.5) {
 		float rm = river_mask(v_local_xz) * (1.0 - t_rock);
-		col = mix(col, beach_col * 0.75, rm);
+		col = mix(col, sand_col * 0.75, rm);
 	}
+
+	// Broad light/dark patches (~30-unit scale) so big fields aren't flat.
+	col *= 1.0 + (value_noise(v_world_pos.xz * 0.033) - 0.5) * 2.0 * variation;
 
 	// Wet sand just above the waterline ties land and sea together; the seabed
 	// darkens with depth so shallows fade smoothly into the deep.
 	float wet = 1.0 - smoothstep(0.0, 0.45, v_height);
-	col.rgb  *= mix(1.0, 0.72, wet);
-	col.rgb  *= mix(1.0, 0.55, smoothstep(0.0, 8.0, -v_height));
+	col *= mix(1.0, 0.72, wet);
+	col *= mix(1.0, 0.55, smoothstep(0.0, 8.0, -v_height));
 
-	ALBEDO    = col.rgb;
+	ALBEDO    = col;
 	ROUGHNESS = mix(0.95, 0.55, wet);
 }
