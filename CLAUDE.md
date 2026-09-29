@@ -17,6 +17,11 @@
 
 Typed GDScript runs meaningfully faster (engine skips Variant boxing) and catches bugs at parse time rather than at runtime.
 
+## Start Here
+
+**Read `goals/status.md` first** — current branch state, what needs verifying, next steps,
+and working agreements. Update it at the end of each session.
+
 ## Game Design
 
 Before building any significant new system, read `goals/game_design.md`.
