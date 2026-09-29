@@ -111,46 +111,32 @@ const _TARGET_CELL:     float = 1.6     # desired grid spacing (world units)
 const _MAX_GRID:        int   = 320
 const _CHUNK_CELLS:     int   = 32      # terrain split into chunks for frustum culling
 const _MESH_SKIP_DEPTH: float = -11.0   # cells entirely below this are never visible
+const _COAST_SUBDIV:    int   = 4       # waterline cells split k×k with smooth heights
+const _COAST_BAND:      float = 0.35    # a cell is "waterline" if its heights straddle ±this
+										# (covers the ±0.19 wave swing)
 
 # ── Trees ──────────────────────────────────────────────────────────────────── #
-const _TREE_SCALE_MIN: float = 0.10
-const _TREE_SCALE_MAX: float = 0.19
+# Claude Design low-poly clusters: ~4–6 wu footprint, 2–4 wu tall, base at y=0,
+# flat-shaded named materials, no textures.  Each cluster has variants a–e.
+const _TREE_SCALE_MIN:  float = 0.9
+const _TREE_SCALE_MAX:  float = 1.3
 const _TREE_MIN_HEIGHT: float = 0.8     # keep trees off the wet sand
+const _TREE_DIR:        String = "res://assets/models/trees/sawyer/sawyer_%s_%s.glb"
+const _TREE_VARIANTS:   Array[String] = ["a", "b", "c", "d", "e"]
 
-const _ZONE_TREE_POOLS: Dictionary = {
-	0: [  # TROPICAL
-		"res://assets/models/trees/tropical/Palm Tree.glb",
-		"res://assets/models/trees/tropical/Ivory cane palm tree.glb",
-		"res://assets/models/trees/tropical/Triangle palm.glb",
-		"res://assets/models/trees/tropical/Everglades palm tree.glb",
-		"res://assets/models/trees/tropical/Thatch palm tree.glb",
-	],
-	1: [  # VOLCANIC
-		"res://assets/models/trees/volcanic/Dead Tree.glb",
-		"res://assets/models/trees/volcanic/Dead Tree_2.glb",
-		"res://assets/models/trees/volcanic/Dead Tree_3.glb",
-	],
-	2: [  # ATOLL
-		"res://assets/models/trees/atoll/Tree.glb",
-		"res://assets/models/trees/atoll/Bush with Flowers.glb",
-	],
-	3: [  # HIGHLAND
-		"res://assets/models/trees/highland/Pine.glb",
-		"res://assets/models/trees/highland/Tree.glb",
-		"res://assets/models/trees/highland/Birch Trees.glb",
-	],
-	4: [  # PLAINS — sparse, mostly low scrub
-		"res://assets/models/trees/tropical/Thatch palm tree.glb",
-		"res://assets/models/trees/highland/Tree.glb",
-	],
-	5: [  # DESERT — dead wood / sparse
-		"res://assets/models/trees/volcanic/Dead Tree.glb",
-		"res://assets/models/trees/volcanic/Dead Tree_3.glb",
-	],
+# Clusters per zone type.  Unused for now: snowy_stand (no polar biome yet),
+# orchard (settlements).
+const _ZONE_TREE_CLUSTERS: Dictionary = {
+	0: ["coastal_palms", "jungle_thicket", "fern_gully"],   # TROPICAL
+	1: ["ash_forest", "dead_snags"],                         # VOLCANIC
+	2: ["coastal_palms", "mangrove"],                        # ATOLL
+	3: ["pine_stand", "spruce_ridge", "birch_copse"],        # HIGHLAND
+	4: ["temperate_grove", "birch_copse"],                   # PLAINS
+	5: ["dead_snags"],                                       # DESERT
 }
 
-# Mesh parts per tree GLB, shared by every island: path -> Array of [Mesh, Transform3D, Material].
-static var _tree_part_cache: Dictionary = {}
+# One merged mesh per tree GLB (one surface per material), shared by every island.
+static var _tree_mesh_cache: Dictionary = {}
 
 # ── Noise ──────────────────────────────────────────────────────────────────── #
 var _warp_noise:   FastNoiseLite   # bends the whole island so nothing is circular
@@ -779,19 +765,53 @@ func _generate_terrain_data() -> void:
 
 func _build_chunk_arrays(heights: PackedFloat32Array, nv: int) -> Array[Array]:
 	var out: Array[Array] = []
-	var chunks: int = int(ceil(float(_grid_n) / float(_CHUNK_CELLS)))
+	var n: int = _grid_n
+	var chunks: int = int(ceil(float(n) / float(_CHUNK_CELLS)))
+
+	# Cells the waterline passes through get subdivided (see _append_coast_cell).
+	var refine: PackedByteArray = PackedByteArray()
+	refine.resize(n * n)
+	for iz: int in range(n):
+		for ix: int in range(n):
+			var i: int = iz * nv + ix
+			var mn: float = minf(minf(heights[i], heights[i + 1]), minf(heights[i + nv], heights[i + nv + 1]))
+			var mx: float = maxf(maxf(heights[i], heights[i + 1]), maxf(heights[i + nv], heights[i + nv + 1]))
+			refine[iz * n + ix] = 1 if (mn < _COAST_BAND and mx > -_COAST_BAND) else 0
 
 	for cz: int in range(chunks):
 		for cx: int in range(chunks):
 			var x0: int = cx * _CHUNK_CELLS
 			var z0: int = cz * _CHUNK_CELLS
-			var x1: int = mini(x0 + _CHUNK_CELLS, _grid_n)
-			var z1: int = mini(z0 + _CHUNK_CELLS, _grid_n)
+			var x1: int = mini(x0 + _CHUNK_CELLS, n)
+			var z1: int = mini(z0 + _CHUNK_CELLS, n)
 			var w:  int = x1 - x0 + 1
+
+			# Base vertex grid for the chunk (coarse cells index into it).
+			var verts:   PackedVector3Array = PackedVector3Array()
+			var normals: PackedVector3Array = PackedVector3Array()
+			verts.resize(w * (z1 - z0 + 1))
+			normals.resize(w * (z1 - z0 + 1))
+			for iz: int in range(z0, z1 + 1):
+				var row:  int = iz * nv
+				var up:   int = maxi(iz - 1, 0) * nv
+				var down: int = mini(iz + 1, n) * nv
+				for ix: int in range(x0, x1 + 1):
+					var li: int = (iz - z0) * w + (ix - x0)
+					verts[li] = Vector3(-_extent + float(ix) * _cell, heights[row + ix],
+							-_extent + float(iz) * _cell)
+					# Central-difference normal straight from the height grid.
+					var hl: float = heights[row + maxi(ix - 1, 0)]
+					var hr: float = heights[row + mini(ix + 1, n)]
+					var hu: float = heights[up + ix]
+					var hd: float = heights[down + ix]
+					normals[li] = Vector3(hl - hr, 2.0 * _cell, hu - hd).normalized()
 
 			var indices: PackedInt32Array = PackedInt32Array()
 			for iz: int in range(z0, z1):
 				for ix: int in range(x0, x1):
+					if refine[iz * n + ix] == 1:
+						_append_coast_cell(heights, refine, ix, iz, verts, normals, indices)
+						continue
 					var h00: float = heights[iz * nv + ix]
 					var h10: float = heights[iz * nv + ix + 1]
 					var h01: float = heights[(iz + 1) * nv + ix]
@@ -809,25 +829,6 @@ func _build_chunk_arrays(heights: PackedFloat32Array, nv: int) -> Array[Array]:
 			if indices.is_empty():
 				continue
 
-			var verts:   PackedVector3Array = PackedVector3Array()
-			var normals: PackedVector3Array = PackedVector3Array()
-			verts.resize(w * (z1 - z0 + 1))
-			normals.resize(w * (z1 - z0 + 1))
-			for iz: int in range(z0, z1 + 1):
-				var row:  int = iz * nv
-				var up:   int = maxi(iz - 1, 0) * nv
-				var down: int = mini(iz + 1, _grid_n) * nv
-				for ix: int in range(x0, x1 + 1):
-					var li: int = (iz - z0) * w + (ix - x0)
-					verts[li] = Vector3(-_extent + float(ix) * _cell, heights[row + ix],
-							-_extent + float(iz) * _cell)
-					# Central-difference normal straight from the height grid.
-					var hl: float = heights[row + maxi(ix - 1, 0)]
-					var hr: float = heights[row + mini(ix + 1, _grid_n)]
-					var hu: float = heights[up + ix]
-					var hd: float = heights[down + ix]
-					normals[li] = Vector3(hl - hr, 2.0 * _cell, hu - hd).normalized()
-
 			var arrays: Array = []
 			arrays.resize(Mesh.ARRAY_MAX)
 			arrays[Mesh.ARRAY_VERTEX] = verts
@@ -835,6 +836,97 @@ func _build_chunk_arrays(heights: PackedFloat32Array, nv: int) -> Array[Array]:
 			arrays[Mesh.ARRAY_INDEX]  = indices
 			out.append(arrays)
 	return out
+
+
+## Splits one coastal grid cell into _COAST_SUBDIV² sub-cells with Catmull-Rom
+## (smooth, C1) heights, so the waterline is a curve instead of a chain of
+## straight segments with hard corners.
+## Crack-free: on any edge shared with an unrefined cell (or the grid border),
+## sub-vertices use plain linear interpolation — exactly the coarse neighbour's
+## straight triangle edge.  Refined↔refined edges evaluate the same bicubic, so
+## they match too.  Corners are the original grid heights in both cases.
+func _append_coast_cell(heights: PackedFloat32Array, refine: PackedByteArray, ix: int, iz: int,
+		verts: PackedVector3Array, normals: PackedVector3Array, indices: PackedInt32Array) -> void:
+	var n:    int   = _grid_n
+	var nv:   int   = n + 1
+	var k:    int   = _COAST_SUBDIV
+	var step: float = 1.0 / float(k)
+
+	# Bicubic heights on a padded (k+3)² sub-grid: the extra ring gives
+	# central-difference normals that agree with neighbouring refined cells.
+	var pw: int = k + 3
+	var hs: PackedFloat32Array = PackedFloat32Array()
+	hs.resize(pw * pw)
+	for sj: int in range(pw):
+		for si: int in range(pw):
+			hs[sj * pw + si] = _bicubic(heights, float(ix) + float(si - 1) * step,
+					float(iz) + float(sj - 1) * step)
+
+	var lin_w: bool = ix == 0     or refine[iz * n + ix - 1] == 0
+	var lin_e: bool = ix == n - 1 or refine[iz * n + ix + 1] == 0
+	var lin_n: bool = iz == 0     or refine[(iz - 1) * n + ix] == 0
+	var lin_s: bool = iz == n - 1 or refine[(iz + 1) * n + ix] == 0
+	var h00: float = heights[iz * nv + ix]
+	var h10: float = heights[iz * nv + ix + 1]
+	var h01: float = heights[(iz + 1) * nv + ix]
+	var h11: float = heights[(iz + 1) * nv + ix + 1]
+
+	var base: int = verts.size()
+	var sub_step: float = step * _cell
+	for sj: int in range(k + 1):
+		for si: int in range(k + 1):
+			var h: float = hs[(sj + 1) * pw + si + 1]
+			if (si == 0 and lin_w) or (si == k and lin_e) or (sj == 0 and lin_n) or (sj == k and lin_s):
+				var tx: float = float(si) * step
+				var tz: float = float(sj) * step
+				h = lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
+			verts.append(Vector3(-_extent + (float(ix) + float(si) * step) * _cell, h,
+					-_extent + (float(iz) + float(sj) * step) * _cell))
+			var hl: float = hs[(sj + 1) * pw + si]
+			var hr: float = hs[(sj + 1) * pw + si + 2]
+			var hu: float = hs[sj * pw + si + 1]
+			var hd: float = hs[(sj + 2) * pw + si + 1]
+			normals.append(Vector3(hl - hr, 2.0 * sub_step, hu - hd).normalized())
+
+	var row: int = k + 1
+	for sj: int in range(k):
+		for si: int in range(k):
+			var i00: int = base + sj * row + si
+			var i10: int = i00 + 1
+			var i01: int = i00 + row
+			var i11: int = i01 + 1
+			indices.append(i00); indices.append(i10); indices.append(i11)
+			indices.append(i00); indices.append(i11); indices.append(i01)
+
+
+## Catmull-Rom bicubic sample of the height grid at fractional grid coords.
+## Passes exactly through every grid height, with a continuous slope between.
+func _bicubic(heights: PackedFloat32Array, fx: float, fz: float) -> float:
+	var n:  int   = _grid_n
+	var nv: int   = n + 1
+	var ix: int   = clampi(int(floor(fx)), 0, n - 1)
+	var iz: int   = clampi(int(floor(fz)), 0, n - 1)
+	var tx: float = fx - float(ix)
+	var tz: float = fz - float(iz)
+	var c0: int = clampi(ix - 1, 0, n)
+	var c1: int = ix
+	var c2: int = ix + 1
+	var c3: int = clampi(ix + 2, 0, n)
+	var r0: int = clampi(iz - 1, 0, n) * nv
+	var r1: int = iz * nv
+	var r2: int = (iz + 1) * nv
+	var r3: int = clampi(iz + 2, 0, n) * nv
+	return _catmull_rom(
+		_catmull_rom(heights[r0 + c0], heights[r0 + c1], heights[r0 + c2], heights[r0 + c3], tx),
+		_catmull_rom(heights[r1 + c0], heights[r1 + c1], heights[r1 + c2], heights[r1 + c3], tx),
+		_catmull_rom(heights[r2 + c0], heights[r2 + c1], heights[r2 + c2], heights[r2 + c3], tx),
+		_catmull_rom(heights[r3 + c0], heights[r3 + c1], heights[r3 + c2], heights[r3 + c3], tx),
+		tz)
+
+
+func _catmull_rom(p0: float, p1: float, p2: float, p3: float, t: float) -> float:
+	return p1 + 0.5 * t * (p2 - p0 + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3
+			+ t * (3.0 * (p1 - p2) + p3 - p0)))
 
 
 func _place_trees(heights: PackedFloat32Array) -> Dictionary:
@@ -862,10 +954,12 @@ func _place_trees(heights: PackedFloat32Array) -> Dictionary:
 		if density < density_threshold:
 			continue
 
-		var pool: Array = _ZONE_TREE_POOLS.get(zt, [])
-		if pool.is_empty():
+		var clusters: Array = _ZONE_TREE_CLUSTERS.get(zt, [])
+		if clusters.is_empty():
 			continue
-		var path: String = pool[rng.randi() % pool.size()]
+		var cluster: String = clusters[rng.randi() % clusters.size()]
+		var variant: String = _TREE_VARIANTS[rng.randi() % _TREE_VARIANTS.size()]
+		var path: String = _TREE_DIR % [cluster, variant]
 
 		var s: float = rng.randf_range(_TREE_SCALE_MIN, _TREE_SCALE_MAX)
 		var basis: Basis = Basis(Vector3.UP, rng.randf() * TAU).scaled(
@@ -908,41 +1002,42 @@ func _build_collision() -> void:
 	_collision_data = PackedFloat32Array()
 
 
-# One MultiMeshInstance3D per tree model part: one draw call for every copy of
-# that model on this island, instead of one node (and draw call) per tree.
+# One MultiMeshInstance3D per tree model: every copy of that model on this
+# island draws in one call per material, instead of one node per tree.
 func _build_trees() -> void:
 	for path: String in _tree_xforms.keys():
+		var mesh: ArrayMesh = _tree_mesh(path)
+		if mesh == null:
+			continue
 		var xforms: Array = _tree_xforms[path]
-		for part: Array in _tree_parts(path):
-			var local: Transform3D = part[1]
-			var mm: MultiMesh = MultiMesh.new()
-			mm.transform_format = MultiMesh.TRANSFORM_3D
-			mm.mesh = part[0] as Mesh
-			mm.instance_count = xforms.size()
-			for i: int in range(xforms.size()):
-				mm.set_instance_transform(i, (xforms[i] as Transform3D) * local)
-			var mmi: MultiMeshInstance3D = MultiMeshInstance3D.new()
-			mmi.multimesh = mm
-			var mat: Material = part[2] as Material
-			if mat != null:
-				mmi.material_override = mat
-			add_child(mmi)
+		var mm: MultiMesh = MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = mesh
+		mm.instance_count = xforms.size()
+		for i: int in range(xforms.size()):
+			mm.set_instance_transform(i, xforms[i] as Transform3D)
+		var mmi: MultiMeshInstance3D = MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		add_child(mmi)
 	_tree_xforms.clear()
 
 
-## Extracts [Mesh, transform relative to GLB root, override Material or null]
-## for every MeshInstance3D in a tree GLB.  Cached across all islands.
-static func _tree_parts(path: String) -> Array:
-	if _tree_part_cache.has(path):
-		return _tree_part_cache[path]
-	var parts: Array = []
+## Loads a tree GLB and bakes all its MeshInstance3D pieces (with their node
+## transforms) into ONE ArrayMesh with one surface per material.  The Claude
+## Design clusters have 18–67 pieces each; merged they're ~5 surfaces, i.e.
+## ~5 draw calls per model per island.  Cached across all islands.
+static func _tree_mesh(path: String) -> ArrayMesh:
+	if _tree_mesh_cache.has(path):
+		return _tree_mesh_cache[path]
 	var packed: PackedScene = load(path) as PackedScene
 	if packed == null:
 		push_warning("Island: failed to load tree GLB: %s" % path)
-		_tree_part_cache[path] = parts
-		return parts
+		_tree_mesh_cache[path] = null
+		return null
 
 	var root: Node = packed.instantiate()
+	# Material -> SurfaceTool collecting every piece that uses it.
+	var by_mat: Dictionary = {}
 	for node: Node in root.find_children("*", "MeshInstance3D", true, false):
 		var mi: MeshInstance3D = node as MeshInstance3D
 		if mi.mesh == null:
@@ -952,14 +1047,25 @@ static func _tree_parts(path: String) -> Array:
 		while n != root and n is Node3D:
 			xf = (n as Node3D).transform * xf
 			n = n.get_parent()
-		var mat: Material = mi.material_override
-		if mat == null and mi.mesh.get_surface_count() == 1:
-			mat = mi.get_surface_override_material(0)
-		parts.append([mi.mesh, xf, mat])
+		if root is Node3D:
+			xf = (root as Node3D).transform * xf
+		for s: int in range(mi.mesh.get_surface_count()):
+			var mat: Material = mi.get_active_material(s)
+			if not by_mat.has(mat):
+				var st_new: SurfaceTool = SurfaceTool.new()
+				st_new.begin(Mesh.PRIMITIVE_TRIANGLES)
+				by_mat[mat] = st_new
+			(by_mat[mat] as SurfaceTool).append_from(mi.mesh, s, xf)
 	root.free()
 
-	_tree_part_cache[path] = parts
-	return parts
+	var merged: ArrayMesh = ArrayMesh.new()
+	for mat: Variant in by_mat.keys():
+		var st: SurfaceTool = by_mat[mat] as SurfaceTool
+		if mat != null:
+			st.set_material(mat as Material)
+		st.commit(merged)
+	_tree_mesh_cache[path] = merged
+	return merged
 
 
 # ── Discovery ──────────────────────────────────────────────────────────────── #

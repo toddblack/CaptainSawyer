@@ -79,9 +79,13 @@ void fragment() {
 	// ── Shore foam ────────────────────────────────────────────────────────────
 	// edge: solid lip right at the waterline.  wash: bands that roll in toward
 	// the shore, broken up by the surface texture so they never look like rings.
-	float edge  = 1.0 - smoothstep(0.0, foam_width, depth_diff);
+	// Width swells and thins along the shore (slow, large-scale texture sample)
+	// so the lip reads as surf rather than an even outline tracing the coast.
+	float swell = texture(water_texture, world_xz * 0.07 + vec2(ts * 0.3, ts * 0.2)).r;
+	float fw    = foam_width * mix(0.35, 1.6, swell);
+	float edge  = 1.0 - smoothstep(0.0, fw, depth_diff);
 	float brk   = texture(water_texture, world_xz * 0.9 + vec2(ts * 1.6, -ts * 1.2)).r;
-	float wash  = sin(depth_diff / foam_width * 9.0 + TIME * 2.2 + brk * 5.0) * 0.5 + 0.5;
+	float wash  = sin(depth_diff / fw * 9.0 + TIME * 2.2 + brk * 5.0) * 0.5 + 0.5;
 	float foam  = edge * edge * 0.9 + edge * smoothstep(0.55, 0.9, wash) * 0.6;
 	foam        = clamp(foam * smoothstep(0.15, 0.6, brk + edge * 0.5), 0.0, 1.0) * foam_strength;
 

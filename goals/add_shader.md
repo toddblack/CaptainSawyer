@@ -130,14 +130,25 @@ restyle every island. Each texture must be:
   and water shaders make coastlines. Small scattered details (pebbles, flowers) are fine.
 - Not too high-contrast at large scale — big dark/light blobs make repetition obvious.
 
-Scale: `tile_world` (default 4 world units per repeat). A 256-px pixel-art tile at 4 wu
-is ~1 texel per screen pixel at default zoom — crisp. Anti-tiling (`sample_norep`) and
-macro `variation` hide the repeat; neither needs art changes.
+Current set: Claude Design's 32-px pixel-art tiles (`incoming/claude_design/…/tiles/`:
+sand, grass, rock, basalt→lava_rock). More ids are available there (wetsand, jungle,
+meadow, ash, snow, cliff*, _b/_c variations) for future layers.
+
+Scale: `tile_world` (4 wu per repeat) and `texels_per_tile` (32) — **all layers must share
+the same texel density**. 32 px / 4 wu = 8 texels per world unit.
+
+Pixel-art rules (the shader already follows them):
+- Sampler `filter_nearest_mipmap` — crisp texels; mipmaps only for zoomed-out shimmer.
+- **Never cross-fade** layers or anti-tiling offsets — dither per texel (`hash12(floor(uv * texels_per_tile))`)
+  and snap offsets to whole texels. One texture read per pixel as a bonus.
+
+**Import settings** (in each `.png.import`): `compress/mode=0` (lossless),
+`mipmaps/generate=true`, **`detect_3d/compress_to=0`** — the default `1` silently
+re-imports as VRAM-compressed the first time the texture is used in 3D, which smears
+pixel art.
 
 Atlas sheets drawn as 2D-tilemap pieces (`beach_watersEdge_rocks.png`,
 `grasses_dirt.png`) don't fit a 3D heightfield blend — use them only as reference.
-The placeholders were sliced from `dirt_sand_water_stone.png` and made seamless with a
-half-offset blend (baked once, offline).
 
 ---
 

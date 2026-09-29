@@ -30,8 +30,12 @@ For anything narrative — crew, dialogue, island lore, naming, discovery text �
 - **Islands** (`scripts/island.gd`): a signed land field `s(x,z)` (domain-warped fractal
   noise, `s = 0` is the coast) places the coastline; heights on both sides are built from
   true grid distance to that coast (chamfer pass), so every shore has the same slope. Terrain is
-  built on a `WorkerThreadPool` task, split into 32-cell chunks, with `HeightMapShape3D`
-  collision and MultiMesh trees. Keep `_river_valley()` / `_zone_weight()` in sync with
+  built on a `WorkerThreadPool` task, split into 32-cell chunks (waterline cells are split
+  4×4 with Catmull-Rom heights for curved coasts; edges shared with coarse cells stay linear
+  so there are no cracks), with `HeightMapShape3D`
+  collision and MultiMesh trees. Trees are Claude Design low-poly clusters
+  (`assets/models/trees/sawyer/`, mapped per zone in `_ZONE_TREE_CLUSTERS`); each GLB is
+  merged into one mesh per material at load — they ship as 18–67 pieces each. Keep `_river_valley()` / `_zone_weight()` in sync with
   `island_terrain.gdshader`.
 - **World seed** (`IslandSpawner.world_seed`): every island derives from
   `hash(world_seed, island_name)`. A save file only needs the seed to rebuild the world.

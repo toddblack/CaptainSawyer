@@ -6,13 +6,16 @@ shader_type spatial;
 // One seamless texture per material (see goals/add_shader.md → "Terrain
 // textures").  repeat_enable lets the GPU wrap them — no atlas seam hacks.
 // source_color: the PNGs are sRGB and must be linearised before lighting.
-uniform sampler2D sand_tex  : source_color, repeat_enable, filter_linear_mipmap_anisotropic;
-uniform sampler2D grass_tex : source_color, repeat_enable, filter_linear_mipmap_anisotropic;
-uniform sampler2D rock_tex  : source_color, repeat_enable, filter_linear_mipmap_anisotropic;
+// Pixel art: nearest texels (crisp), mipmaps only to stop shimmer when zoomed out.
+uniform sampler2D sand_tex  : source_color, repeat_enable, filter_nearest_mipmap;
+uniform sampler2D grass_tex : source_color, repeat_enable, filter_nearest_mipmap;
+uniform sampler2D rock_tex  : source_color, repeat_enable, filter_nearest_mipmap;
 
-// World units covered by one repeat of a texture.  ~4 puts a 256-px pixel-art
-// tile close to 1 texel per screen pixel at the default zoom.
-uniform float tile_world = 4.0;
+// World units covered by one repeat of a texture, and the tiles' pixel size.
+// 32 px over 4 wu = 8 texels per world unit: chunky, readable retro pixels at
+// the default zoom.  All layers must share the same texel density.
+uniform float tile_world      = 4.0;
+uniform float texels_per_tile = 32.0;
 // Large-scale brightness variation that breaks up uniform fields (0 = off).
 uniform float variation  = 0.12;
 
@@ -65,22 +68,19 @@ float value_noise(vec2 p) {
 	           mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), f.x), f.y);
 }
 
-// Anti-tiling sample (Inigo Quilez, "texture repetition" technique 3): a slow
-// noise picks one of 8 random offsets per region and cross-fades between two
-// of them, so the eye never finds the repeat.  Two taps per call.
-// textureGrad keeps mip selection smooth across the offset jumps.  ddx/ddy are
-// passed in: derivatives are undefined inside non-uniform branches, so they're
-// computed once at the top of fragment() before any `if`.
-vec3 sample_norep(sampler2D tex, vec2 uv, vec2 ddx, vec2 ddy) {
+// Anti-tiling for pixel art (after Inigo Quilez, "texture repetition"): a slow
+// noise picks one of 8 random offsets per region, and between two regions each
+// texel is dithered to one offset or the other — never cross-faded, so pixels
+// stay crisp.  Offsets snap to whole texels so the pixel grid never shears.
+// One tap per call.  ddx/ddy are passed in: derivatives are undefined inside
+// non-uniform branches, so they're computed at the top of fragment().
+vec3 sample_norep(sampler2D tex, vec2 uv, vec2 ddx, vec2 ddy, float dither) {
 	float k  = value_noise(uv * 0.35) * 8.0;
 	float ia = floor(k);
-	float f  = fract(k);
-	vec2 off_a = sin(vec2(3.0, 7.0) * ia);
-	vec2 off_b = sin(vec2(3.0, 7.0) * (ia + 1.0));
-	vec3 a = textureGrad(tex, uv + off_a, ddx, ddy).rgb;
-	vec3 b = textureGrad(tex, uv + off_b, ddx, ddy).rgb;
-	float contrast = dot(a - b, vec3(1.0 / 3.0));
-	return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * contrast));
+	vec2 off_a = floor(sin(vec2(3.0, 7.0) * ia)         * texels_per_tile) / texels_per_tile;
+	vec2 off_b = floor(sin(vec2(3.0, 7.0) * (ia + 1.0)) * texels_per_tile) / texels_per_tile;
+	float use_b = step(dither, smoothstep(0.2, 0.8, fract(k)));
+	return textureGrad(tex, uv + mix(off_a, off_b, use_b), ddx, ddy).rgb;
 }
 
 float river_mask(vec2 p) {
@@ -106,15 +106,26 @@ void fragment() {
 	float t_grass = smoothstep(blend_low, blend_high, v_height);
 	float t_rock  = smoothstep(rock_low,  rock_high,  v_height);
 
-	// Only sample layers that actually contribute — most pixels are one layer,
-	// which matters on mobile (each layer is two texture taps).
-	vec3 sand_col = sample_norep(sand_tex, uv, ddx, ddy);
-	vec3 col      = sand_col;
-	if (t_grass > 0.001 && t_rock < 0.999) {
-		col = mix(col, sample_norep(grass_tex, uv, ddx, ddy), t_grass);
-	}
-	if (t_rock > 0.001) {
-		col = mix(col, sample_norep(rock_tex, uv, ddx, ddy), t_rock);
+	// Per-texel dither values (texel-aligned, so layer edges break up along the
+	// pixel grid like hand-placed pixel art instead of a soft gradient).
+	vec2  texel   = floor(uv * texels_per_tile);
+	float d_layer = hash12(texel);
+	float d_tile  = hash12(texel + vec2(17.0, 53.0));
+	float d_river = hash12(texel + vec2(91.0, 29.0));
+
+	// Dithered layer choice: each texel is exactly one material, so only one
+	// texture is read per pixel.
+	int layer = 0;                                   // 0 sand, 1 grass, 2 rock
+	if (d_layer < t_grass) { layer = 1; }
+	if (d_layer < t_rock)  { layer = 2; }
+
+	vec3 col;
+	if (layer == 2) {
+		col = sample_norep(rock_tex, uv, ddx, ddy, d_tile);
+	} else if (layer == 1) {
+		col = sample_norep(grass_tex, uv, ddx, ddy, d_tile);
+	} else {
+		col = sample_norep(sand_tex, uv, ddx, ddy, d_tile);
 	}
 
 	// Zone-based biome tint: Gaussian-weighted blend of grass/rock tints.
@@ -134,7 +145,9 @@ void fragment() {
 
 	if (has_river > 0.5) {
 		float rm = river_mask(v_local_xz) * (1.0 - t_rock);
-		col = mix(col, sand_col * 0.75, rm);
+		if (d_river < rm) {
+			col = sample_norep(sand_tex, uv, ddx, ddy, d_tile) * 0.75;
+		}
 	}
 
 	// Broad light/dark patches (~30-unit scale) so big fields aren't flat.
