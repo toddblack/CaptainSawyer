@@ -12,6 +12,11 @@
 |---|---|
 | `main` @ `8e0e65b` | ✅ Verified in Godot by Todd (2026-09-29, "looking incredible"). Includes smooth coastlines, Claude Design tiles + 3D tree clusters, and terrain cliffs. |
 | `claude-design-assets`, `terrain-cliffs` | Merged into `main` (fast-forward); safe to delete. |
+| `camera-world-edge` | ⚠️ **Not yet run.** Camera view clamped inside the 1000×1000 world so the ocean edge never shows. Check: sail into each edge/corner, zoom fully out there — no grey void. |
+
+- **World size is duplicated**: `WORLD_HALF` in `island_spawner.gd`, `fog_of_war.gd`, `hud.gd`,
+  plus `world_half` on the camera and `boundary_min/max` on the boat. Centralise when the
+  world-expansion feature is built.
 
 ### Cliffs — tuning knobs if Todd wants changes
 - Per-biome cliff height / how much coast is cliff / terrace step & strength: `_ZONE_CLIFFS` in `island.gd`.

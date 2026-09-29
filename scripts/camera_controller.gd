@@ -10,6 +10,10 @@ extends Camera3D
 @export var follow_target: NodePath
 @export var follow_smoothing: float = 5.0
 @export var camera_offset: Vector3 = Vector3(0, 30, 30)
+## Half-size of the ocean (world units). The view is clamped inside it so the
+## edge of the world is never on screen. Keep in sync with WORLD_HALF in
+## island_spawner.gd / fog_of_war.gd / hud.gd.
+@export var world_half: float = 500.0
 
 # Current zoom level
 var target_size: float = 12.0
@@ -82,7 +86,24 @@ func _process(delta: float) -> void:
 	if target_node != null:
 		var boat_pos: Vector3 = target_node.get_global_transform_interpolated().origin
 		var target_pos: Vector3 = Vector3(boat_pos.x, 0.0, boat_pos.z) + camera_offset
-		global_position = global_position.lerp(target_pos, minf(follow_smoothing * delta, 1.0))
+		var pos: Vector3 = global_position.lerp(target_pos, minf(follow_smoothing * delta, 1.0))
+		# Clamp after smoothing (not just the target): zooming out near the edge
+		# grows the view faster than the follow lerp would pull the camera in.
+		var focus: Vector2 = _clamp_to_world(Vector2(pos.x - camera_offset.x, pos.z - camera_offset.z))
+		global_position = Vector3(focus.x + camera_offset.x, pos.y, focus.y + camera_offset.z)
+
+
+## Clamps the ground point at the centre of the view so the whole visible
+## rectangle of sea stays inside the world.
+func _clamp_to_world(focus: Vector2) -> Vector2:
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	var half_w: float = size * 0.5 * vp.x / maxf(vp.y, 1.0)   # size is the view height (keep_height)
+	# The camera is tilted, so half a screen vertically covers more ground:
+	# ground depth = screen height / sin(tilt).  basis.z.y is sin(tilt).
+	var half_d: float = size * 0.5 / maxf(absf(global_basis.z.y), 0.1)
+	var lim_x: float = maxf(world_half - half_w, 0.0)
+	var lim_z: float = maxf(world_half - half_d, 0.0)
+	return Vector2(clampf(focus.x, -lim_x, lim_x), clampf(focus.y, -lim_z, lim_z))
 
 
 func zoom_in() -> void:
