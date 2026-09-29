@@ -42,6 +42,10 @@ For anything narrative — crew, dialogue, island lore, naming, discovery text �
   (`assets/models/trees/sawyer/`, mapped per zone in `_ZONE_TREE_CLUSTERS`); each GLB is
   merged into one mesh per material at load — they ship as 18–67 pieces each. Keep `_river_valley()` / `_zone_weight()` in sync with
   `island_terrain.gdshader`.
+- **Cliffs**: height code *makes* steep ground (`_cliff_params()` per zone via `_ZONE_CLIFFS`:
+  cliff coasts, terraced hillsides, gorges where rivers cut high ground); the shader *paints*
+  anything steep (world `normal.y` < `cliff_ny_start`) with the zone's cliff texture,
+  projected side-on. Cliff texture slot `cliff_tex_i` belongs to zone `i`.
 - **World seed** (`IslandSpawner.world_seed`): every island derives from
   `hash(world_seed, island_name)`. A save file only needs the seed to rebuild the world.
 - **Fog of war** is a full-screen spatial quad using the depth buffer (true world XZ per

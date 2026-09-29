@@ -13,3 +13,6 @@ export/
 *.exe
 *.apk
 *.aab
+
+# Claude Design hand-off drop folder (assets get copied into assets/)
+incoming/

@@ -10,6 +10,12 @@ shader_type spatial;
 uniform sampler2D sand_tex  : source_color, repeat_enable, filter_nearest_mipmap;
 uniform sampler2D grass_tex : source_color, repeat_enable, filter_nearest_mipmap;
 uniform sampler2D rock_tex  : source_color, repeat_enable, filter_nearest_mipmap;
+// Cliff faces: one texture per biome zone (cliff_tex_i belongs to zone i).
+// Drawn side-on (strata, columns), so they're projected horizontally.
+uniform sampler2D cliff_tex_0 : source_color, repeat_enable, filter_nearest_mipmap;
+uniform sampler2D cliff_tex_1 : source_color, repeat_enable, filter_nearest_mipmap;
+uniform sampler2D cliff_tex_2 : source_color, repeat_enable, filter_nearest_mipmap;
+uniform sampler2D cliff_tex_3 : source_color, repeat_enable, filter_nearest_mipmap;
 
 // World units covered by one repeat of a texture, and the tiles' pixel size.
 // 32 px over 4 wu = 8 texels per world unit: chunky, readable retro pixels at
@@ -23,6 +29,11 @@ uniform float blend_low      = 0.8;
 uniform float blend_high     = 1.8;
 uniform float rock_low       = 5.0;
 uniform float rock_high      = 8.0;
+
+// Slope → cliff: world normal.y below cliff_ny_start begins dithering to cliff
+// rock, fully cliff by cliff_ny_full.  0.72 ≈ 44°, 0.52 ≈ 59°.
+uniform float cliff_ny_start = 0.72;
+uniform float cliff_ny_full  = 0.52;
 
 // River — must match Island._river_valley() (island-local space).
 uniform float has_river     = 0.0;
@@ -45,13 +56,15 @@ uniform vec4 zone_rock_tint[4];
 const float HIDDEN_DEPTH = -12.0;
 
 varying vec3  v_world_pos;
+varying vec3  v_world_normal;   // NORMAL in fragment() is view space
 varying vec2  v_local_xz;    // island-local XZ — zones and river live here
 varying float v_height;
 
 void vertex() {
-	v_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	v_local_xz  = VERTEX.xz;   // mesh is centred on island origin → local == offset from centre
-	v_height    = VERTEX.y;
+	v_world_pos    = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
+	v_local_xz     = VERTEX.xz;   // mesh is centred on island origin → local == offset from centre
+	v_height       = VERTEX.y;
 }
 
 float hash12(vec2 p) {
@@ -99,28 +112,94 @@ void fragment() {
 		discard;
 	}
 
-	vec2 uv  = v_world_pos.xz / tile_world;
-	vec2 ddx = dFdx(uv);
-	vec2 ddy = dFdy(uv);
+	// Three planar projections: top-down for ground, and two side-on ones for
+	// cliff faces (so strata run horizontally instead of smearing downhill).
+	vec2 uv    = v_world_pos.xz / tile_world;
+	vec2 uv_sx = vec2(v_world_pos.z, -v_world_pos.y) / tile_world;   // faces looking along ±X
+	vec2 uv_sz = vec2(v_world_pos.x, -v_world_pos.y) / tile_world;   // faces looking along ±Z
+	vec2 ddx    = dFdx(uv);
+	vec2 ddy    = dFdy(uv);
+	vec2 ddx_sx = dFdx(uv_sx);
+	vec2 ddy_sx = dFdy(uv_sx);
+	vec2 ddx_sz = dFdx(uv_sz);
+	vec2 ddy_sz = dFdy(uv_sz);
+
+	vec3 n  = normalize(v_world_normal);
+	vec3 an = abs(n);
 
 	float t_grass = smoothstep(blend_low, blend_high, v_height);
 	float t_rock  = smoothstep(rock_low,  rock_high,  v_height);
+	float t_cliff = 1.0 - smoothstep(cliff_ny_full, cliff_ny_start, n.y);
 
 	// Per-texel dither values (texel-aligned, so layer edges break up along the
-	// pixel grid like hand-placed pixel art instead of a soft gradient).
-	vec2  texel   = floor(uv * texels_per_tile);
+	// pixel grid like hand-placed pixel art instead of a soft gradient).  The
+	// texel grid comes from whichever projection faces the camera best, so
+	// dither cells stay square on steep faces too.
+	vec2 key_uv = uv;
+	if (an.y < max(an.x, an.z)) {
+		key_uv = an.x > an.z ? uv_sx : uv_sz;
+	}
+	vec2  texel   = floor(key_uv * texels_per_tile);
 	float d_layer = hash12(texel);
 	float d_tile  = hash12(texel + vec2(17.0, 53.0));
 	float d_river = hash12(texel + vec2(91.0, 29.0));
+	float d_cliff = hash12(texel + vec2(41.0, 7.0));
+	float d_zone  = hash12(texel + vec2(63.0, 11.0));
+	float d_proj  = hash12(texel + vec2(5.0, 71.0));
+
+	// Zone weights: Gaussian — must match Island._zone_weight().
+	float wts[4] = float[4](0.0, 0.0, 0.0, 0.0);
+	float w_sum  = 0.0;
+	float w_max  = 0.0;
+	vec3  tint_accum = vec3(0.0);
+	for (int i = 0; i < zone_count; i++) {
+		vec2  dd = v_local_xz - zone_data[i].xy;
+		float r  = max(zone_data[i].z, 0.001);
+		float w  = exp(-3.0 * dot(dd, dd) / (r * r));
+		wts[i]      = w;
+		tint_accum += mix(zone_grass_tint[i].rgb, zone_rock_tint[i].rgb, t_rock) * w;
+		w_sum      += w;
+		w_max       = max(w_max, w);
+	}
 
 	// Dithered layer choice: each texel is exactly one material, so only one
 	// texture is read per pixel.
-	int layer = 0;                                   // 0 sand, 1 grass, 2 rock
+	int layer = 0;                                   // 0 sand, 1 grass, 2 rock, 3 cliff
 	if (d_layer < t_grass) { layer = 1; }
 	if (d_layer < t_rock)  { layer = 2; }
+	if (d_cliff < t_cliff) { layer = 3; }
 
 	vec3 col;
-	if (layer == 2) {
+	if (layer == 3) {
+		// Which zone's cliff rock: dithered by sharpened zone weights, so
+		// biome borders on a cliff are a narrow speckled seam, not a wide blend.
+		float s_sum = 0.0;
+		for (int i = 0; i < zone_count; i++) {
+			wts[i] = pow(wts[i] / max(w_max, 1e-20), 8.0);
+			s_sum += wts[i];
+		}
+		float pick = d_zone * s_sum;
+		int   zi   = 0;
+		float acc  = 0.0;
+		for (int i = 0; i < zone_count; i++) {
+			acc += wts[i];
+			if (pick <= acc) { zi = i; break; }
+		}
+		// Side projection facing the surface best; dithered around 45°.
+		bool use_x = d_proj < an.x / max(an.x + an.z, 1e-5);
+		vec2 cuv = use_x ? uv_sx  : uv_sz;
+		vec2 cdx = use_x ? ddx_sx : ddx_sz;
+		vec2 cdy = use_x ? ddy_sx : ddy_sz;
+		if (zi == 0) {
+			col = sample_norep(cliff_tex_0, cuv, cdx, cdy, d_tile);
+		} else if (zi == 1) {
+			col = sample_norep(cliff_tex_1, cuv, cdx, cdy, d_tile);
+		} else if (zi == 2) {
+			col = sample_norep(cliff_tex_2, cuv, cdx, cdy, d_tile);
+		} else {
+			col = sample_norep(cliff_tex_3, cuv, cdx, cdy, d_tile);
+		}
+	} else if (layer == 2) {
 		col = sample_norep(rock_tex, uv, ddx, ddy, d_tile);
 	} else if (layer == 1) {
 		col = sample_norep(grass_tex, uv, ddx, ddy, d_tile);
@@ -128,22 +207,13 @@ void fragment() {
 		col = sample_norep(sand_tex, uv, ddx, ddy, d_tile);
 	}
 
-	// Zone-based biome tint: Gaussian-weighted blend of grass/rock tints.
-	vec3  tint_accum = vec3(0.0);
-	float w_sum      = 0.0;
-	for (int i = 0; i < zone_count; i++) {
-		vec2  dd = v_local_xz - zone_data[i].xy;
-		float r  = max(zone_data[i].z, 0.001);
-		float w  = exp(-3.0 * dot(dd, dd) / (r * r));
-		vec3  zt = mix(zone_grass_tint[i].rgb, zone_rock_tint[i].rgb, t_rock);
-		tint_accum += zt * w;
-		w_sum      += w;
-	}
-	if (w_sum > 1e-20) {
+	// Zone-based biome tint on ground layers.  Cliff textures are already
+	// chosen per biome, so they're left untinted.
+	if (layer != 3 && w_sum > 1e-20) {
 		col *= tint_accum / w_sum;
 	}
 
-	if (has_river > 0.5) {
+	if (has_river > 0.5 && layer != 3) {
 		float rm = river_mask(v_local_xz) * (1.0 - t_rock);
 		if (d_river < rm) {
 			col = sample_norep(sand_tex, uv, ddx, ddy, d_tile) * 0.75;

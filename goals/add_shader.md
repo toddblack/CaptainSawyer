@@ -132,7 +132,12 @@ restyle every island. Each texture must be:
 
 Current set: Claude Design's 32-px pixel-art tiles (`incoming/claude_design/…/tiles/`:
 sand, grass, rock, basalt→lava_rock). More ids are available there (wetsand, jungle,
-meadow, ash, snow, cliff*, _b/_c variations) for future layers.
+meadow, ash, snow, cliffIce, _b/_c variations) for future layers.
+
+**Cliff textures** (`cliff_{earth,basalt,sandstone,granite}.png`) are the exception to
+"top-down": they're drawn **side-on** (strata, basalt columns) and the shader projects them
+horizontally (world XY or ZY plane, picked by the normal). Picked per biome zone in
+`island.gd` `_ZONE_CLIFF_TEX`, applied wherever the ground is steep.
 
 Scale: `tile_world` (4 wu per repeat) and `texels_per_tile` (32) — **all layers must share
 the same texel density**. 32 px / 4 wu = 8 texels per world unit.
@@ -158,6 +163,9 @@ Atlas sheets drawn as 2D-tilemap pieces (`beach_watersEdge_rocks.png`,
   `repeat_enable` instead.
 - **Colour textures need `source_color`** on the sampler hint, or sRGB PNGs are read as
   linear (washed-out / wrong-looking colours).
+- **Top-down UVs smear on steep faces** (a cliff covers almost no XZ area). Project steep
+  surfaces from the side (`vec2(pos.x, -pos.y)` / `vec2(pos.z, -pos.y)`) and use the world
+  normal (a `varying` from `vertex()` — `NORMAL` in `fragment()` is view space) to choose.
 - **`dFdx`/`dFdy` inside an `if` are undefined** (neighbouring pixels may take the other
   branch). Compute derivatives at the top of `fragment()` and pass them to `textureGrad`.
 

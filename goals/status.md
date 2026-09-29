@@ -12,6 +12,7 @@
 |---|---|
 | `main` @ `3ffb240` | ✅ Verified in Godot by Todd. Natural islands, depth-based shores, world-space fog, seamless terrain textures. |
 | `claude-design-assets` @ `38eb770` | ⚠️ **Not yet run in Godot.** Smooth coastlines + Claude Design tiles + 3D tree clusters. Merge to `main` (fast-forward) once verified. |
+| `terrain-cliffs` (off `claude-design-assets`) | ⚠️ **Not yet run.** Cliff coasts, terraced hills, river gorges; slope-painted biome cliff textures. Verifying this also verifies the branch below it. |
 
 ### Verify on `claude-design-assets` (Todd runs Godot — don't launch it for him)
 1. **Coastline corners rounded** — waterline cells are split 4×4 with Catmull-Rom heights.

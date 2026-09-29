@@ -94,6 +94,16 @@ const _TEX_GRASS:     String = "res://assets/textures/terrain/grass.png"
 const _TEX_ROCK:      String = "res://assets/textures/terrain/rock.png"
 const _TEX_LAVA_ROCK: String = "res://assets/textures/terrain/lava_rock.png"
 
+# Cliff-face texture per zone type (painted by slope in the shader).
+const _ZONE_CLIFF_TEX: Dictionary = {
+	0: "res://assets/textures/terrain/cliff_earth.png",       # TROPICAL
+	1: "res://assets/textures/terrain/cliff_basalt.png",      # VOLCANIC
+	2: "res://assets/textures/terrain/cliff_sandstone.png",   # ATOLL (never steep)
+	3: "res://assets/textures/terrain/cliff_granite.png",     # HIGHLAND
+	4: "res://assets/textures/terrain/cliff_earth.png",       # PLAINS
+	5: "res://assets/textures/terrain/cliff_sandstone.png",   # DESERT
+}
+
 var _terrain_mat: ShaderMaterial
 
 # ── Terrain shape ──────────────────────────────────────────────────────────── #
@@ -114,6 +124,24 @@ const _MESH_SKIP_DEPTH: float = -11.0   # cells entirely below this are never vi
 const _COAST_SUBDIV:    int   = 4       # waterline cells split k×k with smooth heights
 const _COAST_BAND:      float = 0.35    # a cell is "waterline" if its heights straddle ±this
 										# (covers the ±0.19 wave swing)
+
+# ── Cliffs ─────────────────────────────────────────────────────────────────── #
+# Steep ground is made here; the shader paints anything steep as cliff rock.
+# Per zone type: x = coastal cliff height (world units), y = cliff coast bias
+# (added to the cliff noise — higher = more of the coast is cliff), z = terrace
+# step height, w = terrace strength (0 = smooth slopes, 1 = flat benches).
+const _ZONE_CLIFFS: Dictionary = {
+	0: Vector4(5.0,  0.00, 5.0, 0.35),   # TROPICAL
+	1: Vector4(8.0,  0.08, 7.0, 0.50),   # VOLCANIC
+	2: Vector4(0.0, -1.00, 0.0, 0.00),   # ATOLL — no cliffs
+	3: Vector4(9.0,  0.10, 6.0, 0.70),   # HIGHLAND
+	4: Vector4(3.5, -0.12, 3.0, 0.30),   # PLAINS
+	5: Vector4(7.0,  0.08, 4.0, 0.85),   # DESERT — mesas
+}
+const _CLIFF_RUN:          float = 1.25   # cliff face width, in grid cells
+const _CLIFF_SEABED_SLOPE: float = 1.0    # deep water right under a cliff
+const _TERRACE_RISER:      float = 0.3    # fraction of each terrace step that is the steep riser
+const _TREE_MAX_SLOPE:     float = 0.8    # rise/run; keeps trees off cliff faces
 
 # ── Trees ──────────────────────────────────────────────────────────────────── #
 # Claude Design low-poly clusters: ~4–6 wu footprint, 2–4 wu tall, base at y=0,
@@ -144,6 +172,7 @@ var _coast_noise:  FastNoiseLite   # fractal coastline detail, in world units
 var _ridge_noise:  FastNoiseLite   # ridged texture on mountains
 var _hill_noise:   FastNoiseLite   # gentle rolling ground
 var _forest_noise: FastNoiseLite   # tree clumping
+var _cliff_noise:  FastNoiseLite   # which stretches of coast / hillside get cliffs
 var _warp_amp:     float = 0.0
 
 # ── Peaks — each Vector3 is (local_x, local_z, strength 0–1) ──────────────── #
@@ -238,6 +267,7 @@ func _setup_noise() -> void:
 	_ridge_noise  = _make_noise(_seed + 777,   1.0 / (r * 0.25), FastNoiseLite.FRACTAL_RIDGED, 3)
 	_hill_noise   = _make_noise(_seed + 1313,  1.0 / (r * 0.35), FastNoiseLite.FRACTAL_FBM, 3)
 	_forest_noise = _make_noise(_seed + 54321, 0.06,             FastNoiseLite.FRACTAL_FBM, 2)
+	_cliff_noise  = _make_noise(_seed + 2468,  1.0 / (r * 0.3),  FastNoiseLite.FRACTAL_FBM, 2)
 
 
 func _make_noise(noise_seed: int, freq: float, fractal: FastNoiseLite.FractalType,
@@ -523,6 +553,13 @@ func _grid_height(heights: PackedFloat32Array, x: float, z: float) -> float:
 	return lerpf(top, bottom, tz)
 
 
+## Ground steepness (rise over run) at an island-local position.
+func _grid_slope(heights: PackedFloat32Array, x: float, z: float) -> float:
+	var gx: float = _grid_height(heights, x + _cell, z) - _grid_height(heights, x - _cell, z)
+	var gz: float = _grid_height(heights, x, z + _cell) - _grid_height(heights, x, z - _cell)
+	return sqrt(gx * gx + gz * gz) / (2.0 * _cell)
+
+
 ## Noise inputs at one point: x = land field s (> 0 land), y = relief height
 ## (mountains + hills, world units), z = warped normalised radius, w = river mask.
 func _sample_point(x: float, z: float) -> Vector4:
@@ -578,14 +615,59 @@ func _relief(x: float, z: float, qx: float, qz: float) -> float:
 	return (mount + hills * 0.10) * max_h
 
 
-## Final height from a sample and its distance (world units) to the coastline.
-func _compose_height(sp: Vector4, dist: float) -> float:
+## Cliff inputs at an island-local position: x = coastal cliff height (0 on
+## beach coasts), y = coastal cliff mask 0–1, z = terrace step height,
+## w = terrace strength 0–1.  Zone-weighted, so biome borders blend smoothly.
+func _cliff_params(x: float, z: float) -> Vector4:
+	if island_type == IslandType.ATOLL:
+		return Vector4.ZERO
+	var total_w: float   = 0.0
+	var zc:      Vector4 = Vector4.ZERO
+	for zone: BiomeZone in _zones:
+		var w:  float   = _zone_weight(zone, x, z)
+		var zp: Vector4 = _ZONE_CLIFFS.get(zone.zone_type, Vector4.ZERO)
+		zc      += zp * w
+		total_w += w
+	if total_w < 1e-12:
+		return Vector4.ZERO
+	zc /= total_w
+	# One noise, two decorrelated samples: stretches of cliff coast, and patches
+	# of terraced hillside.
+	var coast: float = smoothstep(0.05, 0.22, _cliff_noise.get_noise_2d(x, z) + zc.y)
+	var terr:  float = smoothstep(-0.10, 0.25, _cliff_noise.get_noise_2d(x + 517.3, z - 229.1))
+	return Vector4(zc.x * coast, coast, zc.z, zc.w * terr)
+
+
+## Stair-steps a height: flat benches with a steep riser at the top of each
+## step.  Where the ground was already rising fast, the risers become cliffs.
+func _terrace(h: float, step: float) -> float:
+	var f: float = h / step
+	var i: float = floor(f)
+	return (i + smoothstep(1.0 - _TERRACE_RISER, 1.0, f - i)) * step
+
+
+## Final height from a sample, its distance (world units) to the coastline, and
+## its island-local position.
+func _compose_height(sp: Vector4, dist: float, x: float, z: float) -> float:
+	# Deep seabed never needs cliff inputs (it's at the floor either way).
+	var cl: Vector4 = Vector4.ZERO
+	if sp.x > 0.0 or dist < 36.0:
+		cl = _cliff_params(x, z)
+
 	var h: float
 	if sp.x > 0.0:
-		var ramp: float = maxf(8.0, base_radius * 0.15)
-		h = minf(dist * _BEACH_SLOPE, _BEACH_CAP) + smoothstep(0.0, ramp, dist) * sp.y
+		var ramp:   float = maxf(8.0, base_radius * 0.15)
+		var relief: float = smoothstep(0.0, ramp, dist) * sp.y
+		if cl.w > 0.0 and cl.z > 0.5:
+			relief = lerpf(relief, _terrace(relief, cl.z), cl.w)
+		# Cliff coasts: the land rises to the cliff top within ~one grid cell
+		# instead of the gentle beach ramp.
+		var beach: float = minf(dist * _BEACH_SLOPE, _BEACH_CAP)
+		var cliff: float = cl.x * smoothstep(0.0, _cell * _CLIFF_RUN, dist)
+		h = maxf(beach, cliff) + relief
 	else:
-		h = maxf(-dist * _SEABED_SLOPE, _SEABED_FLOOR)
+		var slope: float = lerpf(_SEABED_SLOPE, _CLIFF_SEABED_SLOPE, cl.y)
+		h = maxf(-dist * slope, _SEABED_FLOOR)
 		if island_type == IslandType.ATOLL:
 			var lagoon: float = maxf(-dist * 0.3, _LAGOON_FLOOR)
 			h = lerpf(h, lagoon, 1.0 - smoothstep(0.62, 0.74, sp.z))
@@ -593,7 +675,9 @@ func _compose_height(sp: Vector4, dist: float) -> float:
 	if sp.w > 0.0:
 		# Carve a valley.  Lower reaches drop below sea level and fill with real
 		# ocean water; upper reaches are a dry valley with a painted river bed.
-		h -= sp.w * (0.85 * maxf(h, 0.0) + 0.6)
+		# Through high ground the valley's edge sharpens into a steep gorge.
+		var v: float = lerpf(sp.w, smoothstep(0.35, 0.65, sp.w), smoothstep(4.0, 14.0, h))
+		h -= v * (0.85 * maxf(h, 0.0) + 0.6)
 	return h
 
 
@@ -686,6 +770,12 @@ func _build_materials() -> void:
 	_terrain_mat.set_shader_parameter("grass_tex", load(_TEX_GRASS) as Texture2D)
 	_terrain_mat.set_shader_parameter("rock_tex",  load(rock_path) as Texture2D)
 
+	# Cliff texture slot i belongs to zone i; unused slots repeat zone 0's.
+	for i: int in range(4):
+		var zt: int = _zones[mini(i, _zones.size() - 1)].zone_type
+		var cliff_path: String = _ZONE_CLIFF_TEX.get(zt, _ZONE_CLIFF_TEX[3])
+		_terrain_mat.set_shader_parameter("cliff_tex_%d" % i, load(cliff_path) as Texture2D)
+
 	var max_h: float = _get_max_height()
 	if island_type == IslandType.ATOLL:
 		# Atolls are mostly sand with a little scrub on the high spots.
@@ -747,8 +837,11 @@ func _generate_terrain_data() -> void:
 	var dist: PackedFloat32Array = _coast_distance(samples, nv)
 	var heights: PackedFloat32Array = PackedFloat32Array()
 	heights.resize(nv * nv)
-	for i: int in range(nv * nv):
-		heights[i] = _compose_height(samples[i], dist[i])
+	for iz: int in range(nv):
+		var wz: float = -_extent + float(iz) * _cell
+		for ix: int in range(nv):
+			var i: int = iz * nv + ix
+			heights[i] = _compose_height(samples[i], dist[i], -_extent + float(ix) * _cell, wz)
 
 	# Collision heightmap: uniform scale by _cell, so heights are stored in cell
 	# units.  Seabed clamped — the boat only ever touches the shallows.
@@ -946,6 +1039,8 @@ func _place_trees(heights: PackedFloat32Array) -> Dictionary:
 
 		var y: float = _grid_height(heights, x, z)
 		if y < _TREE_MIN_HEIGHT:
+			continue
+		if _grid_slope(heights, x, z) > _TREE_MAX_SLOPE:
 			continue
 
 		var zt: int = _dominant_zone_at(x, z)
