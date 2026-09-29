@@ -10,9 +10,7 @@
 ### Branches
 | Branch | State |
 |---|---|
-| `main` @ `8e0e65b` | ✅ Verified in Godot by Todd (2026-09-29, "looking incredible"). Includes smooth coastlines, Claude Design tiles + 3D tree clusters, and terrain cliffs. |
-| `claude-design-assets`, `terrain-cliffs` | Merged into `main` (fast-forward); safe to delete. |
-| `camera-world-edge` | ⚠️ **Not yet run.** Camera view clamped inside the 1000×1000 world so the ocean edge never shows. Check: sail into each edge/corner, zoom fully out there — no grey void. |
+| `main` | ✅ Verified in Godot by Todd (2026-09-29). Smooth coastlines, Claude Design tiles + 3D tree clusters, terrain cliffs, and camera clamped inside the world (ocean edge never shows). Merged side branches deleted. |
 
 - **World size is duplicated**: `WORLD_HALF` in `island_spawner.gd`, `fog_of_war.gd`, `hud.gd`,
   plus `world_half` on the camera and `boundary_min/max` on the boat. Centralise when the
