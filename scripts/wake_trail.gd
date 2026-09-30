@@ -143,14 +143,16 @@ func _rebuild(bow: Vector3) -> void:
 	var w: int = 0
 	for i: int in range(n - 1):
 		for c: int in range(cols - 1):
+			# Clockwise seen from above = Godot front face.  Wound the other way,
+			# cull_disabled flips the normal down and the foam renders black.
 			var a: int = i * cols + c
 			var b: int = a + cols
 			indices[w]     = a
-			indices[w + 1] = b
-			indices[w + 2] = b + 1
+			indices[w + 1] = b + 1
+			indices[w + 2] = b
 			indices[w + 3] = a
-			indices[w + 4] = b + 1
-			indices[w + 5] = a + 1
+			indices[w + 4] = a + 1
+			indices[w + 5] = b + 1
 			w += 6
 
 	var arrays: Array = []
