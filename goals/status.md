@@ -10,6 +10,7 @@
 ### Branches
 | Branch | State |
 |---|---|
+| `wake-trail` | ⚠️ **Not yet run.** Stern wake particles → foam ribbon (V arms at the Kelvin angle, churned centre, dithered world-grid pixels). Bow spray particles unchanged. |
 | `main` | ✅ Verified in Godot by Todd (2026-09-29). Smooth coastlines, Claude Design tiles + 3D tree clusters, terrain cliffs, and camera clamped inside the world (ocean edge never shows). Merged side branches deleted. |
 
 - **World size is duplicated**: `WORLD_HALF` in `island_spawner.gd`, `fog_of_war.gd`, `hud.gd`,

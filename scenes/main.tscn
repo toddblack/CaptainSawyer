@@ -10,6 +10,7 @@
 [ext_resource type="Shader" path="res://assets/materials/wake_foam.gdshader" id="9_wake_foam"]
 [ext_resource type="Script" path="res://scripts/boat_visual.gd" id="10_boat_visual"]
 [ext_resource type="Script" path="res://scripts/world_lighting.gd" id="11_world_lighting"]
+[ext_resource type="Script" path="res://scripts/wake_trail.gd" id="12_wake_trail"]
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_ocean"]
 size = Vector2(1000, 1000)
@@ -35,19 +36,6 @@ colors = PackedColorArray(1, 1, 1, 0.9, 0.85, 0.92, 1, 0)
 
 [sub_resource type="GradientTexture1D" id="GradientTexture1D_wake"]
 gradient = SubResource("Gradient_wake")
-
-[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_wake"]
-direction = Vector3(0, 0, 1)
-spread = 32.0
-flatness = 0.9
-initial_velocity_min = 2.0
-initial_velocity_max = 4.5
-gravity = Vector3(0, 0, 0)
-damping_min = 1.0
-damping_max = 2.5
-scale_min = 0.3
-scale_max = 0.7
-color_ramp = SubResource("GradientTexture1D_wake")
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_wake"]
 shader = ExtResource("9_wake_foam")
@@ -136,14 +124,8 @@ shape = SubResource("BoxShape3D_boat")
 [node name="BoatVisual" type="Node3D" parent="Boat"]
 script = ExtResource("10_boat_visual")
 
-[node name="WakeParticles" type="GPUParticles3D" parent="Boat" unique_id=838965754]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.38, 1.1)
-emitting = false
-amount = 28
-lifetime = 2.0
-fixed_fps = 20
-process_material = SubResource("ParticleProcessMaterial_wake")
-draw_pass_1 = SubResource("PlaneMesh_wake")
+[node name="WakeTrail" type="MeshInstance3D" parent="Boat"]
+script = ExtResource("12_wake_trail")
 
 [node name="BowWaveLeft" type="GPUParticles3D" parent="Boat"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5, -0.38, -1.1)

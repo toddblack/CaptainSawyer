@@ -30,12 +30,11 @@ var _touch_target: Vector3 = Vector3.ZERO
 # two-finger pinch-zoom never yanks the boat around.
 var _touches: Dictionary = {}
 
-@onready var wake_particles: GPUParticles3D = $WakeParticles
+@onready var _wake_trail: WakeTrail = $WakeTrail
 @onready var _bow_left: GPUParticles3D = $BowWaveLeft
 @onready var _bow_right: GPUParticles3D = $BowWaveRight
 
 # Cached material references — set once in _ready() to avoid per-frame casting
-var _wake_mat: ParticleProcessMaterial = null
 var _bow_left_mat: ParticleProcessMaterial = null
 var _bow_right_mat: ParticleProcessMaterial = null
 
@@ -47,7 +46,6 @@ func _ready() -> void:
 		acceleration      = ship_data.acceleration
 		turn_speed        = ship_data.turn_speed
 		drag              = ship_data.drag
-	_wake_mat = wake_particles.process_material as ParticleProcessMaterial
 	_bow_left_mat = _bow_left.process_material as ParticleProcessMaterial
 	_bow_right_mat = _bow_right.process_material as ParticleProcessMaterial
 
@@ -160,11 +158,8 @@ func _physics_process(delta: float) -> void:
 	var spd: float = abs(current_speed)
 	var speed_ratio: float = clamp(spd / max_speed, 0.0, 1.0)
 
-	# Stern wake — any direction
-	wake_particles.emitting = spd > 0.5
-	if wake_particles.emitting:
-		_wake_mat.initial_velocity_min = lerp(1.5, 2.5, speed_ratio)
-		_wake_mat.initial_velocity_max = lerp(3.0, 5.5, speed_ratio)
+	# Wake ribbon — laid from the bow when moving forward
+	_wake_trail.strength = speed_ratio if current_speed > 0.5 else 0.0
 
 	# Bow waves — forward only
 	var going_forward: bool = current_speed > 0.5

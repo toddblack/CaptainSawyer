@@ -107,4 +107,12 @@ draw_pass_1 = SubResource("PlaneMesh_fx")
 - **`flatness = 1.0` spreads in the wrong axis** — use 0.8–0.9 to reduce vertical scatter without fully inverting the spread shape.
 - **Set `gravity = Vector3(0,0,0)`** — otherwise particles arc down through the water mesh.
 - **Prefer `ShaderMaterial` over `StandardMaterial3D` for particle meshes** — a simple shader using `COLOR.a` and UV distance gives soft circular foam blobs with zero texture files. See `assets/materials/wake_foam.gdshader` as the reference. `StandardMaterial3D` requires `vertex_color_use_as_albedo = true` to connect `color_ramp`, and produces hard square edges.
+- **Tiny particles read as "cheap 8-bit dots"** — the boat's stern wake was replaced (2026-09-29)
+  by a mesh ribbon (`scripts/wake_trail.gd` + `wake_trail.gdshader`): shape comes from geometry,
+  retro feel from world-grid pixels + Bayer dithering. Consider a ribbon/decal before reaching for
+  particles for anything that should read as one continuous shape on the water.
+- **Transparent effects on the water need `render_priority` ≥ 1** — transparent objects sort by
+  AABB centre, and the 1000-unit ocean plane's centre is often nearer the camera than the effect,
+  so it would draw over it. Water-surface meshes must also ride the ocean's sine swell (copy the
+  wave sum from `water_shader.gdshader`) or they clip under it.
 - **Cache material references in `_ready()`** — don't cast `.process_material as ParticleProcessMaterial` every frame. Store as typed `var _mat: ParticleProcessMaterial = null` and assign once in `_ready()`.
