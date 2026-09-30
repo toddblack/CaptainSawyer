@@ -10,8 +10,12 @@
 ### Branches
 | Branch | State |
 |---|---|
-| `wake-trail` | ⚠️ **Not yet run.** Stern wake particles → foam ribbon (V arms at the Kelvin angle, churned centre, dithered world-grid pixels). Bow spray particles unchanged. |
-| `main` | ✅ Verified in Godot by Todd (2026-09-29). Smooth coastlines, Claude Design tiles + 3D tree clusters, terrain cliffs, and camera clamped inside the world (ocean edge never shows). Merged side branches deleted. |
+| `main` | ✅ Verified in Godot by Todd (2026-09-29). Smooth coastlines, Claude Design tiles + 3D tree clusters, terrain cliffs, camera clamped inside the world (ocean edge never shows), and the foam-ribbon boat wake (Todd: "can I faint now"). Merged side branches deleted. |
+
+### Wake — knobs & open question
+- `wake_trail.gdshader`: `texels_per_unit` (16; 8 = terrain pixel size), `foam_color`, `churn_color`, `churn_alpha`.
+- `wake_trail.gd`: `_LIFETIME`, `_KELVIN_SPREAD`, `_BOW_HALF_WIDTH`.
+- Bow spray particles (`BowWaveLeft/Right`) are still the old tiny-dot style — ask Todd: remove, or restyle to match?
 
 - **World size is duplicated**: `WORLD_HALF` in `island_spawner.gd`, `fog_of_war.gd`, `hud.gd`,
   plus `world_half` on the camera and `boundary_min/max` on the boat. Centralise when the
