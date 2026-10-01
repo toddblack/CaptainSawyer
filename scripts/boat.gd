@@ -141,8 +141,7 @@ func _apply_ship(id: String) -> void:
 	_collision.position = Vector3(0.0, 0.0, hull.get_center().z)
 	var bow_z: float = hull.position.z            # bow is toward −Z
 	var half_beam: float = hull.size.x * 0.5
-	_wake_trail.bow_offset = -bow_z
-	_wake_trail.bow_half_width = half_beam
+	_wake_trail.fit_hull(-bow_z, half_beam, hull.size.z)
 	_bow_left.position = Vector3(-half_beam, _bow_left.position.y, bow_z * 0.9)
 	_bow_right.position = Vector3(half_beam, _bow_right.position.y, bow_z * 0.9)
 

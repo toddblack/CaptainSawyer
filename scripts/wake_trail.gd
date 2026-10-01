@@ -20,9 +20,12 @@ const _ACROSS: Array[float] = [-1.2, -0.6, 0.0, 0.6, 1.2]
 
 ## 0 = no new wake (stopped / reversing slowly), 1 = full speed.
 var strength: float = 0.0
-## Fitted to the hull by boat.gd whenever the ship changes.
-var bow_offset:     float = 1.15    # bow, ahead of the boat's centre
-var bow_half_width: float = 0.5     # ribbon half-width at the bow (half the hull beam)
+## Fitted to the hull by fit_hull() whenever the ship changes.  The ribbon
+## starts as a point at the bow tip, flares to the hull's half-beam over
+## `_bow_entry`, then widens at the Kelvin angle.
+var _bow_offset: float = 1.15    # bow tip, ahead of the boat's centre
+var _half_beam:  float = 0.5
+var _bow_entry:  float = 0.8     # distance behind the bow tip where the hull reaches full beam
 
 var _boat:  Node3D
 var _mesh:  ArrayMesh = ArrayMesh.new()
@@ -48,6 +51,16 @@ func _ready() -> void:
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
+## Sizes the wake to a hull: bow tip distance ahead of the boat's centre,
+## half the beam, and hull length (the centre churn starts behind the stern).
+func fit_hull(bow_offset: float, half_beam: float, hull_length: float) -> void:
+	_bow_offset = bow_offset
+	_half_beam = half_beam
+	_bow_entry = hull_length * 0.3
+	var mat: ShaderMaterial = material_override as ShaderMaterial
+	mat.set_shader_parameter("hull_length", hull_length)
+
+
 func _process(delta: float) -> void:
 	_time += delta
 	if _boat == null:
@@ -61,7 +74,7 @@ func _process(delta: float) -> void:
 	if fwd.length_squared() < 1e-6:
 		return
 	fwd = fwd.normalized()
-	var bow: Vector3 = xf.origin + fwd * bow_offset
+	var bow: Vector3 = xf.origin + fwd * _bow_offset
 	bow.y = _WATER_Y
 
 	# Drop expired points (oldest are at the front).
@@ -131,7 +144,10 @@ func _rebuild(bow: Vector3) -> void:
 		if along.length_squared() < 1e-8:
 			along = Vector3.FORWARD
 		var side:  Vector3 = Vector3(-along.z, 0.0, along.x).normalized()
-		var half:  float   = bow_half_width + _KELVIN_SPREAD * dist
+		# Bow: sqrt flare ≈ a hull's waterline, so the arms leave the bow tip and
+		# hug the hull sides instead of starting a full beam wide.
+		var flare: float   = sqrt(clampf(dist / _bow_entry, 0.0, 1.0))
+		var half:  float   = _half_beam * flare + _KELVIN_SPREAD * dist
 		for c: int in range(cols):
 			var k: int = i * cols + c
 			verts[k]   = pts[i] + side * (_ACROSS[c] * half)
