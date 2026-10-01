@@ -1,8 +1,11 @@
 extends CharacterBody3D
 
-# Ship stats — assign a ShipData resource in the inspector to pick a tier.
-# Falls back to Dinghy defaults if nothing is assigned.
-@export var ship_data: ShipData
+const _SHIP_DATA_PATH: String = "res://resources/ships/%s.tres"
+const _SHIPS: Array[String] = ["dinghy", "sloop", "brigantine", "galleon"]
+
+# Which ship to sail — model, size and handling come from resources/ships/<ship>.tres.
+# Tab cycles ships while the game runs (testing).
+@export_enum("dinghy", "sloop", "brigantine", "galleon") var ship: String = "dinghy"
 
 var max_speed: float = 7.0
 var max_reverse_speed: float = 2.0
@@ -38,6 +41,7 @@ var _still_time: float = 0.0
 var _sails_up: bool = false
 
 @onready var _visual: BoatVisual = $BoatVisual
+@onready var _collision: CollisionShape3D = $CollisionShape3D
 @onready var _wake_trail: WakeTrail = $WakeTrail
 @onready var _bow_left: GPUParticles3D = $BowWaveLeft
 @onready var _bow_right: GPUParticles3D = $BowWaveRight
@@ -48,14 +52,37 @@ var _bow_right_mat: ParticleProcessMaterial = null
 
 
 func _ready() -> void:
-	if ship_data != null:
-		max_speed         = ship_data.max_speed
-		max_reverse_speed = ship_data.max_reverse_speed
-		acceleration      = ship_data.acceleration
-		turn_speed        = ship_data.turn_speed
-		drag              = ship_data.drag
 	_bow_left_mat = _bow_left.process_material as ParticleProcessMaterial
 	_bow_right_mat = _bow_right.process_material as ParticleProcessMaterial
+	_apply_ship(ship)
+
+
+## Loads a ship tier: handling stats, model, and collision / wake / bow spray
+## fitted to its hull.
+func _apply_ship(id: String) -> void:
+	var data: ShipData = load(_SHIP_DATA_PATH % id) as ShipData
+	if data == null:
+		push_warning("Boat: no ShipData for '%s'" % id)
+		return
+	ship = id
+	max_speed         = data.max_speed
+	max_reverse_speed = data.max_reverse_speed
+	acceleration      = data.acceleration
+	turn_speed        = data.turn_speed
+	drag              = data.drag
+
+	var hull: AABB = _visual.build(data.model, data.hull_length)
+	if hull.size == Vector3.ZERO:
+		return
+	var box: BoxShape3D = _collision.shape as BoxShape3D
+	box.size = Vector3(hull.size.x, 1.0, hull.size.z)
+	_collision.position = Vector3(0.0, 0.0, hull.get_center().z)
+	var bow_z: float = hull.position.z            # bow is toward −Z
+	var half_beam: float = hull.size.x * 0.5
+	_wake_trail.bow_offset = -bow_z
+	_wake_trail.bow_half_width = half_beam
+	_bow_left.position = Vector3(-half_beam, _bow_left.position.y, bow_z * 0.9)
+	_bow_right.position = Vector3(half_beam, _bow_right.position.y, bow_z * 0.9)
 
 
 # ------------------------------------------------------------------ #
@@ -77,6 +104,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _touches.size() == 1:
 			var drag_event: InputEventScreenDrag = event as InputEventScreenDrag
 			_update_touch_target(drag_event.position)
+	elif event is InputEventKey:
+		# Testing: Tab cycles through the ships.
+		var key: InputEventKey = event as InputEventKey
+		if key.pressed and not key.echo and key.keycode == KEY_TAB:
+			var next: int = (_SHIPS.find(ship) + 1) % _SHIPS.size()
+			_apply_ship(_SHIPS[next])
+			get_viewport().set_input_as_handled()
 
 
 func _update_touch_target(screen_pos: Vector2) -> void:

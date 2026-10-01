@@ -11,8 +11,6 @@ const _SHADER = preload("res://assets/materials/wake_trail.gdshader")
 
 const _LIFETIME:       float = 3.0     # seconds a stretch of wake survives
 const _SAMPLE_SPACING: float = 0.35    # world units between recorded points
-const _BOW_OFFSET:     float = 1.15    # bow, ahead of the boat's centre
-const _BOW_HALF_WIDTH: float = 0.5     # ribbon half-width at the bow (hull beam)
 const _KELVIN_SPREAD:  float = 0.36    # tan(19.5°): half-width gained per unit behind the bow
 const _WATER_Y:        float = 0.1     # just above the ocean surface (ocean sits at y≈0.03)
 const _TELEPORT_DIST:  float = 5.0     # bow jumped this far → start a fresh wake
@@ -22,6 +20,9 @@ const _ACROSS: Array[float] = [-1.2, -0.6, 0.0, 0.6, 1.2]
 
 ## 0 = no new wake (stopped / reversing slowly), 1 = full speed.
 var strength: float = 0.0
+## Fitted to the hull by boat.gd whenever the ship changes.
+var bow_offset:     float = 1.15    # bow, ahead of the boat's centre
+var bow_half_width: float = 0.5     # ribbon half-width at the bow (half the hull beam)
 
 var _boat:  Node3D
 var _mesh:  ArrayMesh = ArrayMesh.new()
@@ -60,7 +61,7 @@ func _process(delta: float) -> void:
 	if fwd.length_squared() < 1e-6:
 		return
 	fwd = fwd.normalized()
-	var bow: Vector3 = xf.origin + fwd * _BOW_OFFSET
+	var bow: Vector3 = xf.origin + fwd * bow_offset
 	bow.y = _WATER_Y
 
 	# Drop expired points (oldest are at the front).
@@ -130,7 +131,7 @@ func _rebuild(bow: Vector3) -> void:
 		if along.length_squared() < 1e-8:
 			along = Vector3.FORWARD
 		var side:  Vector3 = Vector3(-along.z, 0.0, along.x).normalized()
-		var half:  float   = _BOW_HALF_WIDTH + _KELVIN_SPREAD * dist
+		var half:  float   = bow_half_width + _KELVIN_SPREAD * dist
 		for c: int in range(cols):
 			var k: int = i * cols + c
 			verts[k]   = pts[i] + side * (_ACROSS[c] * half)

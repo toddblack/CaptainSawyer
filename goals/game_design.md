@@ -195,9 +195,11 @@ Speed notes:
 - ❓ Can non-player ships be lost? (Probably yes — stakes matter)
 
 **Ship models** (Claude Design, `assets/models/ships/`): all four tiers exist as low-poly GLBs,
-each with sails set and sails furled. In-game the dinghy is drawn at 0.6× its real 4 m
-(`BoatVisual.model_scale`) — at true scale the galleon would be ~36 units long, so each tier's
-in-game size is still to decide ❓. Sail colour is a setting (`BoatVisual.sail_color`), not baked
+each with sails set and sails furled. Each tier is a `resources/ships/<tier>.tres` (stats from the
+table above + model + `hull_length`). In-game hull lengths (first guess ❓): dinghy 2.6,
+sloop 5, brigantine 8, galleon 11 units — at true scale the galleon would be ~36. Collision,
+wake and bow spray fit themselves to the hull. Pick the ship with `Boat.ship`; Tab cycles
+ships while testing. Sail colour is a setting (`BoatVisual.sail_color`), not baked
 into the models — dyed sails could be a cosmetic / faction marker later.
 
 **Sails (interim rule):** set the moment the boat gets under way; furl after ~5 s sitting still

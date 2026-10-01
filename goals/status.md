@@ -17,13 +17,18 @@
 ### In progress on 2026-09-30 — `ship-models` (needs Todd to check in Godot)
 - 8 ship GLBs (4 tiers × sails set/furled) copied to `assets/models/ships/`. Godot makes the
   `.import` files on first open — commit them after.
-- `boat_visual.gd` now loads the GLB dinghy (scale 0.6 ≈ old boat size), merged per material.
-  `sail_color` export dyes the sails (the GLBs only have canvas).
+- All 4 ships sailable. **Boat → Ship** dropdown in the Inspector, or **Tab** in-game to cycle.
+  Each tier = `resources/ships/<tier>.tres` (stats from game_design.md §9, model, `hull_length`:
+  2.6 / 5 / 8 / 11). Collision box, wake width and bow spray fit the hull automatically.
+- `boat_visual.gd` builds the GLB ship, merged per material. `sail_color` on BoatVisual dyes
+  the sails (the GLBs only have canvas).
 - Sails set when moving; furl after 5 s still (`furl_after_seconds` on Boat). Interim rule —
   sail/anchor/dock controls logged as an open question in game_design.md.
 - Tree GLB merge moved into shared `scripts/mesh_merge.gd` (trees should look identical).
 - **Check:** boat sits right on the water (not floating/sunk — `waterline_y`), bow points the
   way you sail, sails visible from both sides, furl/set swap, trees unchanged, no errors.
+  Per ship: does the size feel right next to islands (`hull_length` in its .tres)? Wake starts
+  at the bow and matches the hull width? Bumps into shore where the hull is?
 
 ### Done on 2026-09-29 (all verified by Todd, all on `main`)
 - **Claude Design tiles + 3D tree clusters + smooth coastlines** (the previously unverified branch).

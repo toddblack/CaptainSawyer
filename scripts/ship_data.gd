@@ -1,10 +1,15 @@
 extends Resource
 class_name ShipData
 
-## Defines the stats for a single ship tier.
-## Create one .tres file per ship type in resources/ships/.
+## Defines a single ship tier: its model, size and handling.
+## One .tres file per ship type in resources/ships/ (named after `model`).
 
 @export var ship_name: String = ""
+## Model in assets/models/ships/ (sawyer_ship_<model>_<set|furled>.glb).
+@export_enum("dinghy", "sloop", "brigantine", "galleon") var model: String = "dinghy"
+## In-game hull length in world units.  The GLBs are true-scale metres
+## (dinghy 4 m … galleon 34 m); this squashes the range so islands still feel big.
+@export var hull_length: float = 2.6
 @export var max_speed: float = 7.0
 @export var max_reverse_speed: float = 2.0
 @export var acceleration: float = 3.0

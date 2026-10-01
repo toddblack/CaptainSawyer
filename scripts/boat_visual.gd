@@ -3,18 +3,13 @@ extends Node3D
 
 ## The player's ship — a Claude Design GLB from assets/models/ships/.
 ## Each tier ships as two files that differ only in the sails (`_set` and
-## `_furled`; Hull + Rigging are identical).  Hull + Rigging are baked into one
-## mesh, each sail state into another (one surface per material), so even the
+## `_furled`; Hull + Rigging are identical).  Hull, Rigging and each sail state
+## are each merged into one mesh (one surface per material), so even the
 ## ~300-piece galleon costs about a dozen draw calls.
-## Attach to a Node3D child of the Boat CharacterBody3D.
+## Child of the Boat CharacterBody3D; boat.gd calls build() with the ship tier.
 
 const _SHIP_PATH: String = "res://assets/models/ships/sawyer_ship_%s_%s.glb"
 
-## Dinghy 4 m, Sloop 11 m, Brigantine 22 m, Galleon 34 m (bow toward −Z).
-@export_enum("dinghy", "sloop", "brigantine", "galleon") var tier: String = "dinghy"
-## The GLBs are in metres. 0.6 keeps the dinghy about the size of the old
-## placeholder boat (~2.6 units), which the collision box and wake are tuned for.
-@export var model_scale: float = 0.6
 ## Canvas by default — dye the sails any colour.
 @export var sail_color: Color = Color(0.91, 0.87, 0.76)
 ## Model origin is the waterline. The Boat body rides at y≈0.5, the ocean at y≈0.03.
@@ -22,29 +17,40 @@ const _SHIP_PATH: String = "res://assets/models/ships/sawyer_ship_%s_%s.glb"
 
 var _sails_set: MeshInstance3D = null
 var _sails_furled: MeshInstance3D = null
+var _sails_up: bool = false
 
 
-func _ready() -> void:
-	position.y = waterline_y
-	scale = Vector3.ONE * model_scale
+## Builds (or rebuilds) the ship from `model`'s GLBs, scaled so the hull is
+## `hull_length` world units long.  Returns the hull's bounds in the Boat's
+## local space, for sizing collision and the wake.
+func build(model: String, hull_length: float) -> AABB:
+	for child: Node in get_children():
+		child.queue_free()
+	_sails_set = null
+	_sails_furled = null
 
-	var set_root: Node = _instantiate("set")
-	var furled_root: Node = _instantiate("furled")
+	var set_root: Node = _instantiate(model, "set")
+	var furled_root: Node = _instantiate(model, "furled")
 	if set_root == null or furled_root == null:
 		if set_root != null:
 			set_root.free()
 		if furled_root != null:
 			furled_root.free()
-		return
+		return AABB()
 
-	var body_parts: Array[Node] = [
-		set_root.find_child("Hull", true, false),
-		set_root.find_child("Rigging", true, false),
-	]
+	var hull_parts: Array[Node] = [set_root.find_child("Hull", true, false)]
+	var rigging_parts: Array[Node] = [set_root.find_child("Rigging", true, false)]
 	var set_parts: Array[Node] = [set_root.find_child("SailsSet", true, false)]
 	var furled_parts: Array[Node] = [furled_root.find_child("SailsFurled", true, false)]
 
-	_add_mesh(MeshMerge.merge(set_root, body_parts))
+	var hull: ArrayMesh = MeshMerge.merge(set_root, hull_parts)
+	var hull_box: AABB = hull.get_aabb()
+	var s: float = hull_length / maxf(hull_box.size.z, 0.01)
+	scale = Vector3.ONE * s
+	position = Vector3(0.0, waterline_y, 0.0)
+
+	_add_mesh(hull)
+	_add_mesh(MeshMerge.merge(set_root, rigging_parts))
 	_sails_set = _add_mesh(MeshMerge.merge(set_root, set_parts))
 	_sails_furled = _add_mesh(MeshMerge.merge(furled_root, furled_parts))
 	var dye: StandardMaterial3D = _dye_sails(_sails_set.mesh as ArrayMesh, null)
@@ -52,20 +58,22 @@ func _ready() -> void:
 
 	set_root.free()
 	furled_root.free()
-	set_sails(false)  # the boat starts at rest
+	set_sails(_sails_up)
+	return transform * hull_box
 
 
 ## Sails set (under way) or furled (at rest).  The only switch — whatever
 ## decides it (idle timer now; sail/anchor/dock controls later) calls this.
 func set_sails(up: bool) -> void:
+	_sails_up = up
 	if _sails_set == null:
 		return
 	_sails_set.visible = up
 	_sails_furled.visible = not up
 
 
-func _instantiate(state: String) -> Node:
-	var path: String = _SHIP_PATH % [tier, state]
+func _instantiate(model: String, state: String) -> Node:
+	var path: String = _SHIP_PATH % [model, state]
 	var packed: PackedScene = load(path) as PackedScene
 	if packed == null:
 		push_warning("BoatVisual: failed to load ship GLB: %s" % path)
