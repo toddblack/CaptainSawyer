@@ -1,7 +1,7 @@
 # Captain Sawyer — Session Status & Handoff
 
 > Read this first when picking the project back up. Update it at the end of every session.
-> *Last updated: 2026-09-30 (ship models, mid-session)*
+> *Last updated: 2026-09-30 (ship models verified & merged)*
 
 ---
 
@@ -10,13 +10,12 @@
 ### Git
 | Branch | State |
 |---|---|
-| `main` | ✅ Verified in Godot by Todd (2026-09-29). Working tree clean. **6 commits ahead of the remote — not pushed** (ask Todd before pushing). |
+| `main` | ✅ Verified in Godot by Todd (2026-09-30). **Not pushed** — ask Todd before pushing. |
 | `island-overhaul` | Stale — fully contained in `main`. Safe to delete (ask first). |
-| `ship-models` | ⏳ **UNVERIFIED** (2026-09-30). Claude Design ship GLBs replace the hand-built dinghy. |
 
-### In progress on 2026-09-30 — `ship-models` (needs Todd to check in Godot)
-- 8 ship GLBs (4 tiers × sails set/furled) copied to `assets/models/ships/`. Godot makes the
-  `.import` files on first open — commit them after.
+### Done on 2026-09-30 (verified by Todd, merged to `main`) — 3D ships ("omg it looks fantastic")
+- 8 Claude Design ship GLBs (4 tiers × sails set/furled) in `assets/models/ships/`, replacing
+  the hand-built dinghy.
 - All 4 ships sailable. **Boat → Ship** dropdown in the Inspector, or **Tab** in-game to cycle.
   Each tier = `resources/ships/<tier>.tres` (stats from game_design.md §9, model, `hull_length`:
   2.6 / 5 / 8 / 11). Collision box, wake width and bow spray fit the hull automatically.
@@ -25,14 +24,14 @@
 - Todd: all 4 ships "look great". Dinghy showed water on its deck (open boat — floor is below
   the GLB waterline; the old ±0.15 bob ran out of step with the waves). Fix: every ship now
   rides the ocean's actual swell (`Boat._swell()`), and `ride_height` in the .tres lifts a
-  model (dinghy 0.12, others 0). ⏳ unverified.
+  model (dinghy 0.12, others 0). ✅
+- Wake starts as a point at the bow tip, flares along the hull (first 30% of its length), then
+  spreads at the Kelvin angle — fixed a hard line across the bow. ✅
 - Sails set when moving; furl after 5 s still (`furl_after_seconds` on Boat). Interim rule —
   sail/anchor/dock controls logged as an open question in game_design.md.
-- Tree GLB merge moved into shared `scripts/mesh_merge.gd` (trees should look identical).
-- **Check:** boat sits right on the water (not floating/sunk — `waterline_y`), bow points the
-  way you sail, sails visible from both sides, furl/set swap, trees unchanged, no errors.
-  Per ship: does the size feel right next to islands (`hull_length` in its .tres)? Wake starts
-  at the bow and matches the hull width? Bumps into shore where the hull is?
+- Tree GLB merge moved into shared `scripts/mesh_merge.gd`.
+- Still open: per-tier sizes (`hull_length`) are a first guess; galleon reverse speed is 2.5
+  in its .tres but 2.0 in game_design.md's table — ask Todd which is right.
 
 ### Done on 2026-09-29 (all verified by Todd, all on `main`)
 - **Claude Design tiles + 3D tree clusters + smooth coastlines** (the previously unverified branch).
