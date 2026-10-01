@@ -18,7 +18,7 @@
   the hand-built dinghy.
 - All 4 ships sailable. **Boat → Ship** dropdown in the Inspector, or **Tab** in-game to cycle.
   Each tier = `resources/ships/<tier>.tres` (stats from game_design.md §9, model, `hull_length`:
-  2.6 / 5 / 8 / 11). Collision box, wake width and bow spray fit the hull automatically.
+  2.6 / 5 / 8 / 11). Collision box and wake fit the hull automatically.
 - `boat_visual.gd` builds the GLB ship, merged per material. `sail_color` on BoatVisual dyes
   the sails (the GLBs only have canvas).
 - Todd: all 4 ships "look great". Dinghy showed water on its deck (open boat — floor is below
@@ -30,8 +30,10 @@
 - Sails set when moving; furl after 5 s still (`furl_after_seconds` on Boat). Interim rule —
   sail/anchor/dock controls logged as an open question in game_design.md.
 - Tree GLB merge moved into shared `scripts/mesh_merge.gd`.
-- Still open: per-tier sizes (`hull_length`) are a first guess; galleon reverse speed is 2.5
-  in its .tres but 2.0 in game_design.md's table — ask Todd which is right.
+- Old bow spray particles (`BowWaveLeft/Right`) removed — the wake arms start at the bow now.
+  `assets/materials/wake_foam.gdshader` is unused, kept only as the particle playbook's example.
+- Galleon reverse speed set to 2.0 (Todd: big ship, slow). Per-tier sizes (`hull_length`)
+  are still a first guess.
 
 ### Done on 2026-09-29 (all verified by Todd, all on `main`)
 - **Claude Design tiles + 3D tree clusters + smooth coastlines** (the previously unverified branch).
@@ -52,16 +54,15 @@ world-grid pixels and ordered/per-texel dithering. Tiny particles read as "cheap
   `_ZONE_CLIFF_TEX` in `island.gd`; `cliff_ny_start` / `cliff_ny_full` in `island_terrain.gdshader`.
   `cliffIce` texture unused (future polar biome).
 - **Wake:** `texels_per_unit` (16; 8 = terrain pixel size), `foam_color`, `churn_color`,
-  `churn_alpha` in `wake_trail.gdshader`; `_LIFETIME`, `_KELVIN_SPREAD`, `_BOW_HALF_WIDTH` in `wake_trail.gd`.
+  `churn_alpha` in `wake_trail.gdshader`; `_LIFETIME`, `_KELVIN_SPREAD` in `wake_trail.gd`;
+  bow flare = `hull_length * 0.3` in `WakeTrail.fit_hull()`.
 
 ### Open questions for Todd (ask at the start)
-1. **Bow spray particles** (`BowWaveLeft/Right` in `main.tscn`) are still the old tiny-dot style.
-   Remove them (wake arms now start at the bow) or restyle as dithered splashes?
-2. **`.gitattributes` with `* text=auto eol=lf`** (Godot's recommended default)? Stops the
+1. **`.gitattributes` with `* text=auto eol=lf`** (Godot's recommended default)? Stops the
    phantom "modified" `.import` files and LF→CRLF warnings caused by `core.autocrlf=true`.
    If `.import` files show as modified with no real diff: `git add -u -- '*.import'` clears them.
-3. Push `main` to the remote? Delete `island-overhaul`?
-4. Older housekeeping: unused tree GLBs in `assets/models/trees/{tropical,volcanic,atoll,highland}/`
+2. Delete `island-overhaul`?
+3. Older housekeeping: unused tree GLBs in `assets/models/trees/{tropical,volcanic,atoll,highland}/`
    and unused `assets/textures/sawyer_atlas_32px_day.png` — delete?
 
 ### Tech debt noted

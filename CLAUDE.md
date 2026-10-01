@@ -49,7 +49,7 @@ For anything narrative â€” crew, dialogue, island lore, naming, discovery text â
 - **Ship** (`scripts/boat_visual.gd`): Claude Design GLBs in `assets/models/ships/`, one
   `_set` + one `_furled` file per tier. Hull, Rigging and each sail state are merged per material
   (`MeshMerge`, shared with trees). `Boat.ship` picks `resources/ships/<tier>.tres` (stats,
-  model, `hull_length`); `_apply_ship()` fits collision, wake and bow spray to the hull bounds
+  model, `hull_length`); `_apply_ship()` fits collision and the wake to the hull bounds
   that `BoatVisual.build()` returns. Sails only change via `BoatVisual.set_sails()`; the rule
   that calls it lives in `boat.gd`.
 - **World seed** (`IslandSpawner.world_seed`): every island derives from

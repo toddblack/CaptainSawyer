@@ -52,17 +52,9 @@ var _sails_up: bool = false
 @onready var _visual: BoatVisual = $BoatVisual
 @onready var _collision: CollisionShape3D = $CollisionShape3D
 @onready var _wake_trail: WakeTrail = $WakeTrail
-@onready var _bow_left: GPUParticles3D = $BowWaveLeft
-@onready var _bow_right: GPUParticles3D = $BowWaveRight
-
-# Cached material references — set once in _ready() to avoid per-frame casting
-var _bow_left_mat: ParticleProcessMaterial = null
-var _bow_right_mat: ParticleProcessMaterial = null
 
 
 func _ready() -> void:
-	_bow_left_mat = _bow_left.process_material as ParticleProcessMaterial
-	_bow_right_mat = _bow_right.process_material as ParticleProcessMaterial
 	_read_ocean()
 	_apply_ship(ship)
 
@@ -119,8 +111,8 @@ func _process(delta: float) -> void:
 	_sea_time = fmod(_sea_time + delta, 3600.0)
 
 
-## Loads a ship tier: handling stats, model, and collision / wake / bow spray
-## fitted to its hull.
+## Loads a ship tier: handling stats, model, and collision / wake fitted to
+## its hull.
 func _apply_ship(id: String) -> void:
 	var data: ShipData = load(_SHIP_DATA_PATH % id) as ShipData
 	if data == null:
@@ -139,11 +131,8 @@ func _apply_ship(id: String) -> void:
 	var box: BoxShape3D = _collision.shape as BoxShape3D
 	box.size = Vector3(hull.size.x, 1.0, hull.size.z)
 	_collision.position = Vector3(0.0, 0.0, hull.get_center().z)
-	var bow_z: float = hull.position.z            # bow is toward −Z
-	var half_beam: float = hull.size.x * 0.5
-	_wake_trail.fit_hull(-bow_z, half_beam, hull.size.z)
-	_bow_left.position = Vector3(-half_beam, _bow_left.position.y, bow_z * 0.9)
-	_bow_right.position = Vector3(half_beam, _bow_right.position.y, bow_z * 0.9)
+	# Bow is toward −Z
+	_wake_trail.fit_hull(-hull.position.z, hull.size.x * 0.5, hull.size.z)
 
 
 # ------------------------------------------------------------------ #
@@ -250,8 +239,8 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	# Grinding against a shore: bleed speed down to what we actually achieved
-	# (sliding along the coast keeps the tangential part) so the wake and bow
-	# spray don't keep running at full speed while we're stuck.
+	# (sliding along the coast keeps the tangential part) so the wake doesn't
+	# keep running at full speed while we're stuck.
 	if get_slide_collision_count() > 0:
 		var real_speed: float = get_real_velocity().length()
 		current_speed = signf(current_speed) * minf(absf(current_speed), real_speed)
@@ -275,17 +264,6 @@ func _physics_process(delta: float) -> void:
 		if _still_time >= furl_after_seconds:
 			_sails_up = false
 			_visual.set_sails(false)
-
-	# Bow waves — forward only
-	_bow_left.emitting = going_forward
-	_bow_right.emitting = going_forward
-	if going_forward:
-		var v_min: float = lerp(1.0, 1.8, speed_ratio)
-		var v_max: float = lerp(2.5, 3.5, speed_ratio)
-		_bow_left_mat.initial_velocity_min = v_min
-		_bow_left_mat.initial_velocity_max = v_max
-		_bow_right_mat.initial_velocity_min = v_min
-		_bow_right_mat.initial_velocity_max = v_max
 
 	# Boundaries
 	position.x = clamp(position.x, boundary_min.x, boundary_max.x)

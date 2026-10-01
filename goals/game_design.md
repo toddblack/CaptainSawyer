@@ -198,7 +198,7 @@ Speed notes:
 each with sails set and sails furled. Each tier is a `resources/ships/<tier>.tres` (stats from the
 table above + model + `hull_length`). In-game hull lengths (first guess ❓): dinghy 2.6,
 sloop 5, brigantine 8, galleon 11 units — at true scale the galleon would be ~36. Collision,
-wake and bow spray fit themselves to the hull. Pick the ship with `Boat.ship`; Tab cycles
+and wake fit themselves to the hull. Pick the ship with `Boat.ship`; Tab cycles
 ships while testing. Sail colour is a setting (`BoatVisual.sail_color`), not baked
 into the models — dyed sails could be a cosmetic / faction marker later.
 
@@ -230,7 +230,8 @@ spaced so coastlines never overlap. Seeded: `IslandSpawner.world_seed` reproduce
 |---|---|---|
 | Ocean + water shader | ✅ | Depth-based shallows + shore foam that follows real coastlines |
 | Boat movement | ✅ | Tier 1 vessel; touch steering (single finger), keyboard for desktop |
-| Wake + bow wave particles | ✅ | Will update per ship tier |
+| Boat wake | ✅ | Dithered foam ribbon from the bow tip; fits each ship's hull |
+| Ships | ✅ | 4 Claude Design tiers, sails set/furled, ride the swell |
 | Isometric camera | ✅ | Follows boat's physics-interpolated position (no jitter) |
 | Fog of war | ✅ | World-space via depth buffer; minimap shares its texture |
 | Island generation | ✅ | Fractal coastlines, biome zones, rivers, atoll lagoons, threaded build |
