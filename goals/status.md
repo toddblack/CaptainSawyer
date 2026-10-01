@@ -10,7 +10,7 @@
 ### Git
 | Branch | State |
 |---|---|
-| `main` | ✅ Verified in Godot by Todd (2026-09-30) and **pushed** to `origin` (GitHub). Only uncommitted change: `ship = "galleon"` on Boat in `main.tscn` — Todd's test setting; ask before committing (the starting ship should be the dinghy). |
+| `main` | ✅ Verified in Godot by Todd (2026-09-30) and **pushed** to `origin` (GitHub). Starting ship = dinghy. If `main.tscn` shows a `ship = ...` change, it's a leftover test setting — ask before committing. |
 | `island-overhaul` | Stale — fully contained in `main`. Safe to delete (ask first). |
 
 ### Done on 2026-09-30 (verified by Todd, merged to `main`) — 3D ships ("omg it looks fantastic")
