@@ -1,7 +1,7 @@
 # Captain Sawyer — Session Status & Handoff
 
 > Read this first when picking the project back up. Update it at the end of every session.
-> *Last updated: 2026-09-30 (ship models verified & merged)*
+> *Last updated: 2026-09-30 (end of session)*
 
 ---
 
@@ -10,7 +10,7 @@
 ### Git
 | Branch | State |
 |---|---|
-| `main` | ✅ Verified in Godot by Todd (2026-09-30). **Not pushed** — ask Todd before pushing. |
+| `main` | ✅ Verified in Godot by Todd (2026-09-30) and **pushed** to `origin` (GitHub). Only uncommitted change: `ship = "galleon"` on Boat in `main.tscn` — Todd's test setting; ask before committing (the starting ship should be the dinghy). |
 | `island-overhaul` | Stale — fully contained in `main`. Safe to delete (ask first). |
 
 ### Done on 2026-09-30 (verified by Todd, merged to `main`) — 3D ships ("omg it looks fantastic")
@@ -32,6 +32,8 @@
 - Tree GLB merge moved into shared `scripts/mesh_merge.gd`.
 - Old bow spray particles (`BowWaveLeft/Right`) removed — the wake arms start at the bow now.
   `assets/materials/wake_foam.gdshader` is unused, kept only as the particle playbook's example.
+  (Committed straight to `main` at Todd's request; tiny change, not yet confirmed in Godot —
+  ask if anything looked off.)
 - Galleon reverse speed set to 2.0 (Todd: big ship, slow). Per-tier sizes (`hull_length`)
   are still a first guess.
 
@@ -83,7 +85,11 @@ world-grid pixels and ordered/per-texel dithering. Tiny particles read as "cheap
 3. **World edge as story** (idea, not decided): the boat currently stops at an invisible wall;
    later this could be "the charts end here" / rough water until more ocean is unlocked
    (see memory: world expansion).
-4. Later polish: tree shadows at low sun, more terrain layers (wetsand, jungle, meadow, ash,
+4. **Ship follow-ups** (open questions in game_design.md): player sail / anchor / dock controls
+   (sails currently auto-furl after 5 s still), final in-game size per tier, ship upgrades
+   (how you get the sloop etc.). Sail billow animation later — sail meshes are merged now, so
+   do it in a vertex shader on the `sail` material.
+5. Later polish: tree shadows at low sun, more terrain layers (wetsand, jungle, meadow, ash,
    snow, `_b/_c` variations are in the Claude Design export), minimap island shapes,
    HUD static/dynamic split.
 
