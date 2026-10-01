@@ -9,6 +9,6 @@ model = "sloop"
 hull_length = 5.0
 max_speed = 10.0
 max_reverse_speed = 3.0
-acceleration = 3.0
+acceleration = 3.5
 turn_speed = 2.0
 drag = 0.95
