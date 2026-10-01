@@ -21,9 +21,9 @@ var _sails_up: bool = false
 
 
 ## Builds (or rebuilds) the ship from `model`'s GLBs, scaled so the hull is
-## `hull_length` world units long.  Returns the hull's bounds in the Boat's
-## local space, for sizing collision and the wake.
-func build(model: String, hull_length: float) -> AABB:
+## `hull_length` world units long and lifted by `ride_height`.  Returns the
+## hull's bounds in the Boat's local space, for sizing collision and the wake.
+func build(model: String, hull_length: float, ride_height: float) -> AABB:
 	for child: Node in get_children():
 		child.queue_free()
 	_sails_set = null
@@ -47,7 +47,7 @@ func build(model: String, hull_length: float) -> AABB:
 	var hull_box: AABB = hull.get_aabb()
 	var s: float = hull_length / maxf(hull_box.size.z, 0.01)
 	scale = Vector3.ONE * s
-	position = Vector3(0.0, waterline_y, 0.0)
+	position = Vector3(0.0, waterline_y + ride_height, 0.0)
 
 	_add_mesh(hull)
 	_add_mesh(MeshMerge.merge(set_root, rigging_parts))

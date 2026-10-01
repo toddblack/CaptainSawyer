@@ -14,7 +14,9 @@ var turn_speed: float = 2.5
 var drag: float = 0.95
 
 # Bobbing settings
-@export var bob_height: float = 0.15
+# The boat rides the ocean's own swell (read from its water shader), so hull
+# and water rise and fall together; these only drive the gentle rocking.
+@export var ocean_path: NodePath = ^"../Ocean"
 @export var bob_speed: float = 1.5
 @export var tilt_amount: float = 0.05
 
@@ -29,6 +31,13 @@ var drag: float = 0.95
 var current_speed: float = 0.0
 var direction: Vector3 = Vector3.FORWARD
 var bob_time: float = 0.0
+
+# Ocean swell — mirrors water_shader.gdshader's wave sum on its vertex grid.
+var _wave_height: float = 0.0
+var _wave_speed: float = 1.0
+var _ocean_corner: Vector2 = Vector2(-500.0, -500.0)  # world XZ of the grid's first vertex
+var _ocean_cell: float = 10.0                          # world units between grid vertices
+var _sea_time: float = 0.0                             # tracks the shader's TIME
 
 # Touch steering — Option B: finger position projected to world XZ, boat sails toward it
 var _has_touch_target: bool = false
@@ -54,7 +63,60 @@ var _bow_right_mat: ParticleProcessMaterial = null
 func _ready() -> void:
 	_bow_left_mat = _bow_left.process_material as ParticleProcessMaterial
 	_bow_right_mat = _bow_right.process_material as ParticleProcessMaterial
+	_read_ocean()
 	_apply_ship(ship)
+
+
+## Copies the ocean's wave settings and vertex grid so _swell() matches what
+## the water shader draws.
+func _read_ocean() -> void:
+	var ocean: MeshInstance3D = get_node_or_null(ocean_path) as MeshInstance3D
+	if ocean == null:
+		push_warning("Boat: no ocean at %s — boat won't ride the swell" % ocean_path)
+		return
+	var mat: ShaderMaterial = ocean.get_active_material(0) as ShaderMaterial
+	if mat != null:
+		if mat.get_shader_parameter("wave_height") != null:
+			_wave_height = float(mat.get_shader_parameter("wave_height"))
+		if mat.get_shader_parameter("wave_speed") != null:
+			_wave_speed = float(mat.get_shader_parameter("wave_speed"))
+	var plane: PlaneMesh = ocean.mesh as PlaneMesh
+	if plane != null:
+		_ocean_cell = plane.size.x / float(plane.subdivide_width + 1)
+		_ocean_corner = Vector2(ocean.global_position.x, ocean.global_position.z) - plane.size * 0.5
+
+
+## Height of the drawn ocean surface above calm sea at world (x, z).  The ocean
+## grid (~10 units) is coarser than the waves, so — like the GPU — evaluate the
+## shader's wave sum at the four surrounding vertices and interpolate.
+func _swell(x: float, z: float) -> float:
+	var gx: float = (x - _ocean_corner.x) / _ocean_cell
+	var gz: float = (z - _ocean_corner.y) / _ocean_cell
+	var ix: float = floorf(gx)
+	var iz: float = floorf(gz)
+	var fx: float = gx - ix
+	var fz: float = gz - iz
+	var x0: float = _ocean_corner.x + ix * _ocean_cell
+	var z0: float = _ocean_corner.y + iz * _ocean_cell
+	var x1: float = x0 + _ocean_cell
+	var z1: float = z0 + _ocean_cell
+	var top: float = lerpf(_wave_at(x0, z0), _wave_at(x1, z0), fx)
+	var bot: float = lerpf(_wave_at(x0, z1), _wave_at(x1, z1), fx)
+	return lerpf(top, bot, fz)
+
+
+## water_shader.gdshader vertex(): keep in sync if the waves change.
+func _wave_at(x: float, z: float) -> float:
+	var t: float = _sea_time * _wave_speed
+	return sin(x * 0.5 + t * 1.2) * _wave_height \
+		+ sin(z * 0.4 + t * 0.9) * _wave_height * 0.8 \
+		+ sin((x + z) * 0.3 + t * 0.7) * _wave_height * 0.5
+
+
+func _process(delta: float) -> void:
+	# Shader TIME advances by the frame step and wraps at 3600 s (Godot's default
+	# time_rollover_secs); keep the swell clock in step with it.
+	_sea_time = fmod(_sea_time + delta, 3600.0)
 
 
 ## Loads a ship tier: handling stats, model, and collision / wake / bow spray
@@ -71,7 +133,7 @@ func _apply_ship(id: String) -> void:
 	turn_speed        = data.turn_speed
 	drag              = data.drag
 
-	var hull: AABB = _visual.build(data.model, data.hull_length)
+	var hull: AABB = _visual.build(data.model, data.hull_length, data.ride_height)
 	if hull.size == Vector3.ZERO:
 		return
 	var box: BoxShape3D = _collision.shape as BoxShape3D
@@ -176,10 +238,9 @@ func _physics_process(delta: float) -> void:
 	# Apply movement
 	velocity = direction * current_speed
 
-	# Bobbing
+	# Ride the swell — hull and water rise and fall together
 	bob_time += delta
-	var bob_offset: float = sin(bob_time * bob_speed) * bob_height
-	position.y = 0.5 + bob_offset
+	position.y = 0.5 + _swell(position.x, position.z)
 
 	# Gentle rocking
 	var rock_z: float = sin(bob_time * bob_speed * 1.3) * tilt_amount

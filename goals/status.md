@@ -22,6 +22,10 @@
   2.6 / 5 / 8 / 11). Collision box, wake width and bow spray fit the hull automatically.
 - `boat_visual.gd` builds the GLB ship, merged per material. `sail_color` on BoatVisual dyes
   the sails (the GLBs only have canvas).
+- Todd: all 4 ships "look great". Dinghy showed water on its deck (open boat — floor is below
+  the GLB waterline; the old ±0.15 bob ran out of step with the waves). Fix: every ship now
+  rides the ocean's actual swell (`Boat._swell()`), and `ride_height` in the .tres lifts a
+  model (dinghy 0.12, others 0). ⏳ unverified.
 - Sails set when moving; furl after 5 s still (`furl_after_seconds` on Boat). Interim rule —
   sail/anchor/dock controls logged as an open question in game_design.md.
 - Tree GLB merge moved into shared `scripts/mesh_merge.gd` (trees should look identical).
@@ -64,8 +68,8 @@ world-grid pixels and ordered/per-texel dithering. Tiny particles read as "cheap
 ### Tech debt noted
 - **World size is duplicated**: `WORLD_HALF` in `island_spawner.gd`, `fog_of_war.gd`, `hud.gd`,
   `world_half` on the camera, `boundary_min/max` on the boat. Centralise when world expansion is built.
-- Wake ribbon and water shader share the wave sum — keep `wake_trail.gdshader` in sync with
-  `water_shader.gdshader` if waves change.
+- Wake ribbon, boat and water shader share the wave sum — keep `wake_trail.gdshader` and
+  `Boat._wave_at()` in sync with `water_shader.gdshader` if waves change.
 
 ---
 

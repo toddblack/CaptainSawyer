@@ -69,9 +69,9 @@ void fragment() {
 	// Smooth fade to fully opaque near and beyond world edges.
 	float e = 0.04;
 	float edge_fade = smoothstep(0.0, e, fog_uv.x)
-	                * smoothstep(0.0, e, 1.0 - fog_uv.x)
-	                * smoothstep(0.0, e, fog_uv.y)
-	                * smoothstep(0.0, e, 1.0 - fog_uv.y);
+					* smoothstep(0.0, e, 1.0 - fog_uv.x)
+					* smoothstep(0.0, e, fog_uv.y)
+					* smoothstep(0.0, e, 1.0 - fog_uv.y);
 
 	// 9-tap blur softens the texel grid into cloud-like edges.
 	vec2  c = clamp(fog_uv, 0.0, 1.0);

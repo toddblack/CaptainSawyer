@@ -10,6 +10,9 @@ class_name ShipData
 ## In-game hull length in world units.  The GLBs are true-scale metres
 ## (dinghy 4 m … galleon 34 m); this squashes the range so islands still feel big.
 @export var hull_length: float = 2.6
+## Lifts the model in the water (world units).  The open dinghy's floor sits
+## below the GLB waterline, so the ocean would show inside the hull without it.
+@export var ride_height: float = 0.0
 @export var max_speed: float = 7.0
 @export var max_reverse_speed: float = 2.0
 @export var acceleration: float = 3.0

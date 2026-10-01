@@ -7,74 +7,16 @@
 [ext_resource type="Script" uid="uid://iui1bbt7fr03" path="res://scripts/island_spawner.gd" id="6_island_spawner"]
 [ext_resource type="Script" uid="uid://d27l1vuuk0msb" path="res://scripts/hud.gd" id="7_hud"]
 [ext_resource type="Script" uid="uid://4i7xcvsuh8en" path="res://scripts/fog_of_war.gd" id="8_fog"]
-[ext_resource type="Shader" path="res://assets/materials/wake_foam.gdshader" id="9_wake_foam"]
-[ext_resource type="Script" path="res://scripts/boat_visual.gd" id="10_boat_visual"]
-[ext_resource type="Script" path="res://scripts/world_lighting.gd" id="11_world_lighting"]
-[ext_resource type="Script" path="res://scripts/wake_trail.gd" id="12_wake_trail"]
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_ocean"]
-size = Vector2(1000, 1000)
-subdivide_width = 100
-subdivide_depth = 100
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
-render_priority = 0
-shader = ExtResource("2_water_shader")
-shader_parameter/water_texture = ExtResource("4_water_texture")
-shader_parameter/base_color = Color(0.14, 0.38, 0.68, 1)
-shader_parameter/texture_strength = 0.45
-shader_parameter/tile_scale = 0.3
-shader_parameter/scroll_speed = 0.015
-shader_parameter/wave_height = 0.08
-shader_parameter/wave_speed = 1.0
-
-[sub_resource type="BoxShape3D" id="BoxShape3D_boat"]
-size = Vector3(1.2, 1, 2.2)
-
-[sub_resource type="Gradient" id="Gradient_wake"]
-colors = PackedColorArray(1, 1, 1, 0.9, 0.85, 0.92, 1, 0)
-
-[sub_resource type="GradientTexture1D" id="GradientTexture1D_wake"]
-gradient = SubResource("Gradient_wake")
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_wake"]
-shader = ExtResource("9_wake_foam")
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_wake"]
-material = SubResource("ShaderMaterial_wake")
-size = Vector2(0.28, 0.28)
-
-[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_bow_left"]
-direction = Vector3(-1, 0, 0)
-spread = 22.0
-flatness = 0.95
-initial_velocity_min = 1.0
-initial_velocity_max = 2.5
-gravity = Vector3(0, 0, 0)
-scale_min = 0.15
-scale_max = 0.35
-damping_min = 2.5
-damping_max = 4.0
-color_ramp = SubResource("GradientTexture1D_wake")
-
-[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_bow_right"]
-direction = Vector3(1, 0, 0)
-spread = 22.0
-flatness = 0.95
-initial_velocity_min = 1.0
-initial_velocity_max = 2.5
-gravity = Vector3(0, 0, 0)
-scale_min = 0.15
-scale_max = 0.35
-damping_min = 2.5
-damping_max = 4.0
-color_ramp = SubResource("GradientTexture1D_wake")
+[ext_resource type="Shader" uid="uid://v6t5y3ffdhqo" path="res://assets/materials/wake_foam.gdshader" id="9_wake_foam"]
+[ext_resource type="Script" uid="uid://5j58mk0gsuow" path="res://scripts/boat_visual.gd" id="10_boat_visual"]
+[ext_resource type="Script" uid="uid://bhjib3k1bdqu4" path="res://scripts/world_lighting.gd" id="11_world_lighting"]
+[ext_resource type="Script" uid="uid://dcvbcksjtyupl" path="res://scripts/wake_trail.gd" id="12_wake_trail"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
-sky_top_color = Color(0.13, 0.32, 0.80, 1)
+sky_top_color = Color(0.13, 0.32, 0.8, 1)
 sky_horizon_color = Color(0.58, 0.76, 0.95, 1)
-ground_horizon_color = Color(0.29, 0.38, 0.47, 1)
 ground_bottom_color = Color(0.01, 0.02, 0.07, 1)
+ground_horizon_color = Color(0.29, 0.38, 0.47, 1)
 
 [sub_resource type="Sky" id="Sky_world"]
 sky_material = SubResource("ProceduralSkyMaterial_sky")
@@ -85,9 +27,73 @@ sky = SubResource("Sky_world")
 ambient_light_source = 3
 ambient_light_energy = 0.3
 
+[sub_resource type="PlaneMesh" id="PlaneMesh_ocean"]
+size = Vector2(1000, 1000)
+subdivide_width = 100
+subdivide_depth = 100
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
+render_priority = 0
+shader = ExtResource("2_water_shader")
+shader_parameter/water_texture = ExtResource("4_water_texture")
+shader_parameter/texture_strength = 0.45
+shader_parameter/tile_scale = 0.3
+shader_parameter/scroll_speed = 0.015
+shader_parameter/wave_height = 0.08
+shader_parameter/wave_speed = 1.0
+shader_parameter/shallow_color = Color(0.18, 0.76, 0.65, 1)
+shader_parameter/deep_color = Color(0.06, 0.18, 0.52, 1)
+shader_parameter/max_depth = 10.0
+shader_parameter/shallow_alpha = 0.4
+shader_parameter/deep_alpha = 1.0
+shader_parameter/foam_width = 0.9
+shader_parameter/foam_strength = 0.85
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_boat"]
+size = Vector3(1.2, 1, 2.2)
+
+[sub_resource type="Gradient" id="Gradient_wake"]
+colors = PackedColorArray(1, 1, 1, 0.9, 0.85, 0.92, 1, 0)
+
+[sub_resource type="GradientTexture1D" id="GradientTexture1D_wake"]
+gradient = SubResource("Gradient_wake")
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_bow_left"]
+direction = Vector3(-1, 0, 0)
+spread = 22.0
+flatness = 0.95
+initial_velocity_min = 1.0
+initial_velocity_max = 2.5
+gravity = Vector3(0, 0, 0)
+damping_min = 2.5
+damping_max = 4.0
+scale_min = 0.15
+scale_max = 0.35
+color_ramp = SubResource("GradientTexture1D_wake")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_wake"]
+render_priority = 0
+shader = ExtResource("9_wake_foam")
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_wake"]
+material = SubResource("ShaderMaterial_wake")
+size = Vector2(0.28, 0.28)
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_bow_right"]
+spread = 22.0
+flatness = 0.95
+initial_velocity_min = 1.0
+initial_velocity_max = 2.5
+gravity = Vector3(0, 0, 0)
+damping_min = 2.5
+damping_max = 4.0
+scale_min = 0.15
+scale_max = 0.35
+color_ramp = SubResource("GradientTexture1D_wake")
+
 [node name="Main" type="Node3D" unique_id=1162207363]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=137633740]
 environment = SubResource("Environment_world")
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1545804316]
@@ -105,7 +111,6 @@ light_energy = 1.2
 light_angular_distance = 1.5
 shadow_enabled = true
 shadow_bias = 0.08
-shadow_normal_bias = 2.0
 directional_shadow_max_distance = 60.0
 script = ExtResource("11_world_lighting")
 
@@ -117,31 +122,32 @@ surface_material_override/0 = SubResource("ShaderMaterial_water")
 [node name="Boat" type="CharacterBody3D" parent="." unique_id=141551468 groups=["boat"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 20)
 script = ExtResource("1_boat")
+ship = "galleon"
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Boat" unique_id=200000002]
 shape = SubResource("BoxShape3D_boat")
 
-[node name="BoatVisual" type="Node3D" parent="Boat"]
+[node name="BoatVisual" type="Node3D" parent="Boat" unique_id=1505275652]
 script = ExtResource("10_boat_visual")
 
-[node name="WakeTrail" type="MeshInstance3D" parent="Boat"]
+[node name="WakeTrail" type="MeshInstance3D" parent="Boat" unique_id=554597348]
 script = ExtResource("12_wake_trail")
 
-[node name="BowWaveLeft" type="GPUParticles3D" parent="Boat"]
+[node name="BowWaveLeft" type="GPUParticles3D" parent="Boat" unique_id=1094935959]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5, -0.38, -1.1)
+emitting = false
 amount = 14
 lifetime = 1.2
 fixed_fps = 20
-emitting = false
 process_material = SubResource("ParticleProcessMaterial_bow_left")
 draw_pass_1 = SubResource("PlaneMesh_wake")
 
-[node name="BowWaveRight" type="GPUParticles3D" parent="Boat"]
+[node name="BowWaveRight" type="GPUParticles3D" parent="Boat" unique_id=1375050218]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5, -0.38, -1.1)
+emitting = false
 amount = 14
 lifetime = 1.2
 fixed_fps = 20
-emitting = false
 process_material = SubResource("ParticleProcessMaterial_bow_right")
 draw_pass_1 = SubResource("PlaneMesh_wake")
 

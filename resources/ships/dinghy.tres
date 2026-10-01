@@ -7,6 +7,7 @@ script = ExtResource("1_ship_data")
 ship_name = "Dinghy"
 model = "dinghy"
 hull_length = 2.6
+ride_height = 0.12
 max_speed = 7.0
 max_reverse_speed = 2.0
 acceleration = 3.0
