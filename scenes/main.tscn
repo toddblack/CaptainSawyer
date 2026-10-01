@@ -122,7 +122,6 @@ surface_material_override/0 = SubResource("ShaderMaterial_water")
 [node name="Boat" type="CharacterBody3D" parent="." unique_id=141551468 groups=["boat"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 20)
 script = ExtResource("1_boat")
-ship = "galleon"
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Boat" unique_id=200000002]
 shape = SubResource("BoxShape3D_boat")
