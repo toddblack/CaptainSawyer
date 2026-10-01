@@ -15,6 +15,10 @@ var drag: float = 0.95
 @export var bob_speed: float = 1.5
 @export var tilt_amount: float = 0.05
 
+# Sails set the moment the boat gets under way, and furl only after it has sat
+# still this long — a brief stop while steering doesn't touch them.
+@export var furl_after_seconds: float = 5.0
+
 # Boundary settings (ocean is 1000x1000, keep a small margin inside the edge)
 @export var boundary_min: Vector2 = Vector2(-495, -495)
 @export var boundary_max: Vector2 = Vector2(495, 495)
@@ -30,6 +34,10 @@ var _touch_target: Vector3 = Vector3.ZERO
 # two-finger pinch-zoom never yanks the boat around.
 var _touches: Dictionary = {}
 
+var _still_time: float = 0.0
+var _sails_up: bool = false
+
+@onready var _visual: BoatVisual = $BoatVisual
 @onready var _wake_trail: WakeTrail = $WakeTrail
 @onready var _bow_left: GPUParticles3D = $BowWaveLeft
 @onready var _bow_right: GPUParticles3D = $BowWaveRight
@@ -161,8 +169,20 @@ func _physics_process(delta: float) -> void:
 	# Wake ribbon — laid from the bow when moving forward
 	_wake_trail.strength = speed_ratio if current_speed > 0.5 else 0.0
 
-	# Bow waves — forward only
+	# Sails — set when under way, furled after sitting still a while
 	var going_forward: bool = current_speed > 0.5
+	if going_forward:
+		_still_time = 0.0
+		if not _sails_up:
+			_sails_up = true
+			_visual.set_sails(true)
+	elif _sails_up and spd < 0.3:
+		_still_time += delta
+		if _still_time >= furl_after_seconds:
+			_sails_up = false
+			_visual.set_sails(false)
+
+	# Bow waves — forward only
 	_bow_left.emitting = going_forward
 	_bow_right.emitting = going_forward
 	if going_forward:

@@ -46,6 +46,10 @@ For anything narrative â€” crew, dialogue, island lore, naming, discovery text â
   cliff coasts, terraced hillsides, gorges where rivers cut high ground); the shader *paints*
   anything steep (world `normal.y` < `cliff_ny_start`) with the zone's cliff texture,
   projected side-on. Cliff texture slot `cliff_tex_i` belongs to zone `i`.
+- **Ship** (`scripts/boat_visual.gd`): Claude Design GLBs in `assets/models/ships/`, one
+  `_set` + one `_furled` file per tier. Hull+Rigging and each sail state are merged per material
+  (`MeshMerge`, shared with trees). Sails only change via `BoatVisual.set_sails()`; the rule
+  that calls it lives in `boat.gd`.
 - **World seed** (`IslandSpawner.world_seed`): every island derives from
   `hash(world_seed, island_name)`. A save file only needs the seed to rebuild the world.
 - **Fog of war** is a full-screen spatial quad using the depth buffer (true world XZ per

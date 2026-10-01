@@ -194,6 +194,18 @@ Speed notes:
 - ❓ Fleet management: how much control does the player have over other ships?
 - ❓ Can non-player ships be lost? (Probably yes — stakes matter)
 
+**Ship models** (Claude Design, `assets/models/ships/`): all four tiers exist as low-poly GLBs,
+each with sails set and sails furled. In-game the dinghy is drawn at 0.6× its real 4 m
+(`BoatVisual.model_scale`) — at true scale the galleon would be ~36 units long, so each tier's
+in-game size is still to decide ❓. Sail colour is a setting (`BoatVisual.sail_color`), not baked
+into the models — dyed sails could be a cosmetic / faction marker later.
+
+**Sails (interim rule):** set the moment the boat gets under way; furl after ~5 s sitting still
+(`Boat.furl_after_seconds`). ❓ Long-term this probably becomes player control — e.g.
+**set/furl sails, drop anchor, dock/beach** — which ties into resting, landing parties and
+night stops. Everything goes through one switch (`BoatVisual.set_sails()`), so changing the
+rule never touches the model code.
+
 ---
 
 ## Scale ✅
@@ -270,6 +282,10 @@ Pinch-to-zoom replaces scroll wheel. ✅
   revisit against the stranded-crew premise: when/how do inhabitants enter the story?
 - **Weather/storms** — scope and timing?
 - **Home island threat?** Can it ever be at risk?
+- **Sail / anchor / dock controls** — does the player set and furl sails, drop anchor, beach the
+  boat? (Interim: sails auto-furl after ~5 s at rest — see §9.)
+- **Ship tier sizes in the world** — the models are true-scale metres (dinghy 4 m → galleon 34 m);
+  how big should each tier look next to islands?
 
 ---
 

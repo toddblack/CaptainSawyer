@@ -1,7 +1,7 @@
 # Captain Sawyer — Session Status & Handoff
 
 > Read this first when picking the project back up. Update it at the end of every session.
-> *Last updated: 2026-09-29 (end of session)*
+> *Last updated: 2026-09-30 (ship models, mid-session)*
 
 ---
 
@@ -12,6 +12,18 @@
 |---|---|
 | `main` | ✅ Verified in Godot by Todd (2026-09-29). Working tree clean. **6 commits ahead of the remote — not pushed** (ask Todd before pushing). |
 | `island-overhaul` | Stale — fully contained in `main`. Safe to delete (ask first). |
+| `ship-models` | ⏳ **UNVERIFIED** (2026-09-30). Claude Design ship GLBs replace the hand-built dinghy. |
+
+### In progress on 2026-09-30 — `ship-models` (needs Todd to check in Godot)
+- 8 ship GLBs (4 tiers × sails set/furled) copied to `assets/models/ships/`. Godot makes the
+  `.import` files on first open — commit them after.
+- `boat_visual.gd` now loads the GLB dinghy (scale 0.6 ≈ old boat size), merged per material.
+  `sail_color` export dyes the sails (the GLBs only have canvas).
+- Sails set when moving; furl after 5 s still (`furl_after_seconds` on Boat). Interim rule —
+  sail/anchor/dock controls logged as an open question in game_design.md.
+- Tree GLB merge moved into shared `scripts/mesh_merge.gd` (trees should look identical).
+- **Check:** boat sits right on the water (not floating/sunk — `waterline_y`), bow points the
+  way you sail, sails visible from both sides, furl/set swap, trees unchanged, no errors.
 
 ### Done on 2026-09-29 (all verified by Todd, all on `main`)
 - **Claude Design tiles + 3D tree clusters + smooth coastlines** (the previously unverified branch).
